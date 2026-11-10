@@ -1,6 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 
+/** Never prerender routes that talk to Postgres — publish build has DATABASE_URL before migrate. */
+export const dynamic = "force-dynamic";
+
 export const metadata: Metadata = {
   title: "Recovery Lists",
   description: "Local recovery list ops console — Sheets read-only",

@@ -150,9 +150,9 @@ export default async function LeadPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  await ensureFixtureLeads();
   const user = await getSessionUser();
   if (!user) redirect("/login");
+  await ensureFixtureLeads();
 
   const { id } = await params;
   const leadId = Number(id);

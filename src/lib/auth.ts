@@ -151,6 +151,8 @@ export async function getSessionUser(): Promise<PublicUser | null> {
   const jar = await cookies();
   const token = jar.get(COOKIE)?.value;
   if (!token) return null;
+  // During `next build`, DATABASE_URL may be set before migrations — avoid querying.
+  if (process.env.NEXT_PHASE === "phase-production-build") return null;
   const rows = await sql<UserRow>(
     `SELECT u.* FROM sessions s
      JOIN users u ON u.id = s.user_id

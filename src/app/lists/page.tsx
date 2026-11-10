@@ -94,9 +94,9 @@ export default async function ListsPage({
     to?: string;
   }>;
 }) {
-  await ensureFixtureLeads();
   const user = await getSessionUser();
   if (!user) redirect("/login");
+  await ensureFixtureLeads();
 
   const statuses = await getAssignedStatuses(user.id, user.role);
   const attemptBuckets = await getAssignedAttemptBuckets(user.id, user.role);

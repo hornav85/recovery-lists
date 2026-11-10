@@ -161,8 +161,14 @@ async function alignStatusesWithColumnW() {
   }
 }
 
+function isProductionBuild(): boolean {
+  return process.env.NEXT_PHASE === "phase-production-build";
+}
+
 /** Ensure PGlite migrations (when local), seed, and status alignment. */
 export async function ensureReady() {
+  // Publish `next build` runs with DATABASE_URL set before migrations apply — skip DB I/O.
+  if (isProductionBuild()) return;
   ready ??= (async () => {
     await sql("SELECT 1");
     await seedIfEmpty();
@@ -178,6 +184,7 @@ export async function ensureReady() {
 
 /** Call after ensureReady so fixture CSV loads without circular imports. */
 export async function ensureFixtureLeads() {
+  if (isProductionBuild()) return;
   await ensureReady();
   const leadCount = countOf(await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM leads"));
   if (leadCount === 0) {
