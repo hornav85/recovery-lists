@@ -1,15 +1,29 @@
 import { NextResponse } from "next/server";
-import { login } from "@/lib/auth";
+import { checkLoginRateLimit, login, recordLoginAttempt } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
 
 export async function POST(req: Request) {
-  ensureFixtureLeads();
+  await ensureFixtureLeads();
   const body = await req.json().catch(() => ({}));
   const username = String(body.username || "");
   const password = String(body.password || "");
   if (!username || !password) {
     return NextResponse.json({ error: "Username and password required" }, { status: 400 });
   }
+
+  const ip =
+    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
+    req.headers.get("x-real-ip") ||
+    "unknown";
+  const rateKey = `${username.toLowerCase()}|${ip}`;
+  if (!checkLoginRateLimit(rateKey)) {
+    return NextResponse.json(
+      { error: "Too many login attempts. Try again later." },
+      { status: 429 },
+    );
+  }
+  recordLoginAttempt(rateKey);
+
   const result = await login(username, password);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 401 });

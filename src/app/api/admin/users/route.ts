@@ -40,9 +40,15 @@ export async function POST(req: Request) {
     }
 
     try {
+      if (password.length < 10) {
+        return NextResponse.json(
+          { error: "Password must be at least 10 characters" },
+          { status: 400 },
+        );
+      }
       const rows = await sql<UserRow>(
-        `INSERT INTO users (username, email, password_hash, display_name, role)
-         VALUES ($1, $2, $3, $4, $5)
+        `INSERT INTO users (username, email, password_hash, display_name, role, must_change_password)
+         VALUES ($1, $2, $3, $4, $5, 1)
          RETURNING *`,
         [username, email, hashPassword(password), displayName, role],
       );

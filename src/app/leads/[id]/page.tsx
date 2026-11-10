@@ -4,7 +4,12 @@ import { AppShell } from "@/components/AppShell";
 import { AttemptForm } from "@/components/AttemptForm";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
-import { getLeadDetail, type AttemptRow, type LeadDb } from "@/lib/leads";
+import {
+  agentCanAccessLead,
+  getLeadDetail,
+  type AttemptRow,
+  type LeadDb,
+} from "@/lib/leads";
 
 function LeadFields({
   lead,
@@ -152,6 +157,8 @@ export default async function LeadPage({
   const { id } = await params;
   const leadId = Number(id);
   if (!Number.isFinite(leadId)) notFound();
+
+  if (!(await agentCanAccessLead(user, leadId))) notFound();
 
   const detail = await getLeadDetail(leadId);
   if (!detail) notFound();

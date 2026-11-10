@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireUser } from "@/lib/auth";
 import { ensureFixtureLeads, sql } from "@/lib/db";
+import { agentCanAccessLead } from "@/lib/leads";
 import { ATTEMPT_OUTCOMES } from "@/lib/statuses";
 
 export async function POST(req: Request) {
@@ -26,6 +27,10 @@ export async function POST(req: Request) {
       )
     )[0];
     if (!lead) return NextResponse.json({ error: "Lead not found" }, { status: 404 });
+
+    if (!(await agentCanAccessLead(user, lead.id))) {
+      return NextResponse.json({ error: "Not assigned to this lead" }, { status: 403 });
+    }
 
     const attempts = await sql(
       `INSERT INTO call_attempts

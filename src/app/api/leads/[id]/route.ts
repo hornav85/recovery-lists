@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { AuthError, requireUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
-import { getLeadDetail } from "@/lib/leads";
+import { agentCanAccessLead, getLeadDetail } from "@/lib/leads";
 
 export async function GET(
   _req: Request,
@@ -9,11 +9,14 @@ export async function GET(
 ) {
   try {
     await ensureFixtureLeads();
-    await requireUser();
+    const user = await requireUser();
     const { id } = await ctx.params;
     const leadId = Number(id);
     if (!Number.isFinite(leadId)) {
       return NextResponse.json({ error: "Invalid id" }, { status: 400 });
+    }
+    if (!(await agentCanAccessLead(user, leadId))) {
+      return NextResponse.json({ error: "Not assigned to this lead" }, { status: 403 });
     }
     const detail = await getLeadDetail(leadId);
     if (!detail) return NextResponse.json({ error: "Not found" }, { status: 404 });

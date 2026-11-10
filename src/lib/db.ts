@@ -1,6 +1,5 @@
 import { readdir, readFile } from "node:fs/promises";
 import { PGlite } from "@electric-sql/pglite";
-import bcrypt from "bcryptjs";
 import pg from "pg";
 import { SEED_STATUSES, STATUS_RENAMES, normalizeStatus } from "./statuses";
 
@@ -53,17 +52,8 @@ function countOf(rows: Array<{ c: string | number | bigint }>): number {
   return Number(rows[0]?.c ?? 0);
 }
 
+/** Seed default list statuses only — never create users with a baked-in password. */
 async function seedIfEmpty() {
-  const userCount = countOf(await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM users"));
-  if (userCount === 0) {
-    const hash = bcrypt.hashSync("admin123", 10);
-    await sql(
-      `INSERT INTO users (username, email, password_hash, display_name, role)
-       VALUES ($1, $2, $3, $4, $5)`,
-      ["admin", "don@local", hash, "Admin", "admin"],
-    );
-  }
-
   const statusCount = countOf(
     await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM list_statuses"),
   );
@@ -72,6 +62,10 @@ async function seedIfEmpty() {
       await sql(`INSERT INTO list_statuses (name, active) VALUES ($1, 1)`, [name]);
     }
   }
+}
+
+export async function countUsers(): Promise<number> {
+  return countOf(await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM users"));
 }
 
 /** Rename/insert list tabs to match Column W spellings; re-normalize lead.status. */
@@ -202,6 +196,7 @@ export type UserRow = {
   disabled: number;
   deleted_at: string | null;
   created_at: string;
+  must_change_password: number;
 };
 
 export type PublicUser = {
@@ -213,6 +208,7 @@ export type PublicUser = {
   disabled: boolean;
   deleted: boolean;
   deletedAt: string | null;
+  mustChangePassword: boolean;
 };
 
 export function toPublicUser(u: UserRow): PublicUser {
@@ -225,5 +221,6 @@ export function toPublicUser(u: UserRow): PublicUser {
     disabled: !!u.disabled,
     deleted: Boolean(u.deleted_at),
     deletedAt: u.deleted_at || null,
+    mustChangePassword: !!u.must_change_password,
   };
 }

@@ -3,7 +3,7 @@ import {
   bucketForCount,
   countInBucket,
 } from "./attempts";
-import { sql } from "./db";
+import { sql, type PublicUser } from "./db";
 import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
 import { activeSortValue } from "./prospect";
 
@@ -232,4 +232,36 @@ export async function getAssignedStatuses(userId: number, role: string) {
      ORDER BY s.name`,
     [userId],
   );
+}
+
+/**
+ * Agents may only open/log leads that appear in their assigned status lists
+ * or assigned attempt-bucket queues (same rules as /api/lists).
+ */
+export async function agentCanAccessLead(
+  user: PublicUser,
+  leadId: number,
+): Promise<boolean> {
+  if (user.role === "admin") return true;
+
+  const leads = await sql<LeadDb>("SELECT * FROM leads WHERE id = $1", [leadId]);
+  const lead = leads[0];
+  if (!lead) return false;
+
+  const assignedStatuses = await getAssignedStatuses(user.id, user.role);
+  const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
+  const statusMatch = statusNames.includes(normalizeStatus(lead.status));
+  if (statusMatch) return true;
+
+  const buckets = await getAssignedAttemptBuckets(user.id, user.role);
+  if (buckets.length === 0) return false;
+
+  const counts = await attemptCountsByProspect();
+  const attemptCount = counts.get(lead.prospect_key) || 0;
+  const bucket = bucketForCount(attemptCount);
+  if (!buckets.includes(bucket)) return false;
+
+  // Attempt queues for agents with status assignments are status-filtered.
+  if (statusNames.length === 0) return true;
+  return statusMatch;
 }

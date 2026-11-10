@@ -1,16 +1,34 @@
 "use client";
 
-import { FormEvent, useState } from "react";
+import { FormEvent, useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("admin");
-  const [password, setPassword] = useState("admin123");
+  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState("");
+  const [displayName, setDisplayName] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
-  async function onSubmit(e: FormEvent) {
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/auth/setup")
+      .then((r) => r.json())
+      .then((data) => {
+        if (!cancelled) setNeedsSetup(Boolean(data.needsSetup));
+      })
+      .catch(() => {
+        if (!cancelled) setNeedsSetup(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  async function onLogin(e: FormEvent) {
     e.preventDefault();
     setLoading(true);
     setError("");
@@ -25,6 +43,34 @@ export default function LoginPage() {
         setError(data.error || "Login failed");
         return;
       }
+      if (data.user?.mustChangePassword) {
+        router.push("/change-password");
+      } else {
+        router.push("/lists");
+      }
+      router.refresh();
+    } catch {
+      setError("Network error");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function onSetup(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    try {
+      const res = await fetch("/api/auth/setup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username, email, password, displayName }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Setup failed");
+        return;
+      }
       router.push("/lists");
       router.refresh();
     } catch {
@@ -34,6 +80,16 @@ export default function LoginPage() {
     }
   }
 
+  if (needsSetup === null) {
+    return (
+      <div className="login-wrap">
+        <div className="card login-card">
+          <p className="muted">Loading…</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="login-wrap">
       <div className="card login-card">
@@ -41,9 +97,11 @@ export default function LoginPage() {
           Recovery <span style={{ color: "var(--accent)" }}>Lists</span>
         </h1>
         <p className="muted" style={{ marginTop: 0 }}>
-          Local ops console. Sheets stay read-only.
+          {needsSetup
+            ? "Create the first admin account. Choose a strong password — nothing is pre-seeded."
+            : "Sign in with your admin or agent account."}
         </p>
-        <form className="stack" onSubmit={onSubmit}>
+        <form className="stack" onSubmit={needsSetup ? onSetup : onLogin}>
           <label className="field">
             Username
             <input
@@ -54,19 +112,49 @@ export default function LoginPage() {
               required
             />
           </label>
+          {needsSetup && (
+            <>
+              <label className="field">
+                Email
+                <input
+                  type="email"
+                  autoComplete="email"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                  required
+                />
+              </label>
+              <label className="field">
+                Display name
+                <input
+                  type="text"
+                  autoComplete="name"
+                  value={displayName}
+                  onChange={(e) => setDisplayName(e.target.value)}
+                />
+              </label>
+            </>
+          )}
           <label className="field">
             Password
             <input
               type="password"
-              autoComplete="current-password"
+              autoComplete={needsSetup ? "new-password" : "current-password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              minLength={needsSetup ? 10 : undefined}
             />
           </label>
           {error && <div className="error">{error}</div>}
           <button className="btn" type="submit" disabled={loading}>
-            {loading ? "Signing in…" : "Sign in"}
+            {loading
+              ? needsSetup
+                ? "Creating…"
+                : "Signing in…"
+              : needsSetup
+                ? "Create admin"
+                : "Sign in"}
           </button>
         </form>
       </div>

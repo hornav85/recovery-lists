@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect } from "react";
 import { useRouter } from "next/navigation";
 import type { PublicUser } from "@/lib/db";
 
@@ -12,6 +13,12 @@ export function AppShell({
   children: React.ReactNode;
 }) {
   const router = useRouter();
+
+  useEffect(() => {
+    if (user.mustChangePassword) {
+      router.replace("/change-password");
+    }
+  }, [user.mustChangePassword, router]);
 
   async function logout() {
     await fetch("/api/auth/logout", { method: "POST" });

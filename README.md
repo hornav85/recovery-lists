@@ -15,15 +15,11 @@ npm run dev
 
 Open **http://127.0.0.1:3000**
 
-### Seed admin
+### First admin (no default password)
 
-| Field    | Value       |
-|----------|-------------|
-| Username | `admin`     |
-| Password | `admin123`  |
-| Email    | `don@local` |
+On first launch with an empty users table, open **/login** and use the **Create admin** form. Choose your own username, email, and password (min 10 characters). Nothing is pre-seeded.
 
-Change this password after first login on a shared machine.
+Accounts created later by an admin must change their password on first sign-in.
 
 ## What it does
 
