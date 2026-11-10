@@ -9,6 +9,7 @@ import {
   getQueueForAttemptBucket,
   getQueueForStatus,
 } from "@/lib/leads";
+import { applyQueueView, parseQueueSort } from "@/lib/queue-filters";
 
 export async function GET(req: Request) {
   try {
@@ -18,6 +19,11 @@ export async function GET(req: Request) {
     const status = url.searchParams.get("status");
     const attempts = parseAttemptBucket(url.searchParams.get("attempts"));
     const view = url.searchParams.get("view");
+    const sort = parseQueueSort(url.searchParams.get("sort"));
+    const from = url.searchParams.get("from");
+    const to = url.searchParams.get("to");
+    const fromYmd = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : null;
+    const toYmd = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : null;
 
     const assigned = await getAssignedStatuses(user.id, user.role);
     const attemptBuckets = await getAssignedAttemptBuckets(user.id, user.role);
@@ -34,8 +40,9 @@ export async function GET(req: Request) {
         return NextResponse.json({ error: "Not assigned to this attempt list" }, { status: 403 });
       }
       const allowed = user.role === "admin" ? null : assigned.map((s) => s.name);
-      const queue = await getQueueForAttemptBucket(attempts, allowed);
-      return NextResponse.json({ view: "attempts", attempts, queue });
+      const raw = await getQueueForAttemptBucket(attempts, allowed);
+      const queue = applyQueueView(raw, { sort, fromYmd, toYmd });
+      return NextResponse.json({ view: "attempts", attempts, sort, from: fromYmd, to: toYmd, queue });
     }
 
     const allowed = assigned.some((s) => s.name.toLowerCase() === (status || "").toLowerCase());
@@ -44,12 +51,14 @@ export async function GET(req: Request) {
     }
 
     const full = await getQueueForStatus(status || "");
-    const queue = attempts
-      ? await getQueueForStatus(status || "", attempts)
-      : full;
+    const raw = attempts ? await getQueueForStatus(status || "", attempts) : full;
+    const queue = applyQueueView(raw, { sort, fromYmd, toYmd });
     return NextResponse.json({
       status,
       attempts: attempts || null,
+      sort,
+      from: fromYmd,
+      to: toYmd,
       bucketCounts: countByAttemptBucket(full),
       queue,
     });

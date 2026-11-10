@@ -193,7 +193,9 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
 
   // Agents with assignments but zero dials in range (still show for boss)
   const agents = await sql<{ id: number; username: string; display_name: string }>(
-    `SELECT id, username, display_name FROM users WHERE role = 'agent' AND disabled = 0 ORDER BY display_name`,
+    `SELECT id, username, display_name FROM users
+     WHERE role = 'agent' AND disabled = 0 AND deleted_at IS NULL
+     ORDER BY display_name`,
   );
   for (const u of agents) {
     if (agentId && u.id !== agentId) continue;

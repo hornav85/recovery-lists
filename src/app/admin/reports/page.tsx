@@ -6,7 +6,12 @@ import { AppShell } from "@/components/AppShell";
 import type { PublicUser } from "@/lib/db";
 import { ATTEMPT_OUTCOMES } from "@/lib/statuses";
 
-type AgentOpt = { id: number; username: string; display_name: string };
+type AgentOpt = {
+  id: number;
+  username: string;
+  display_name: string;
+  deleted_at?: string | null;
+};
 
 type ReportPayload = {
   range: { label: string; fromYmd: string; toYmd: string; preset: string };
@@ -183,6 +188,7 @@ export default function AdminReportsPage() {
               {agents.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.display_name} (@{a.username})
+                  {a.deleted_at ? " — deleted" : ""}
                 </option>
               ))}
             </select>

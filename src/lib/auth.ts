@@ -15,7 +15,7 @@ export async function login(
     [username.trim()],
   );
   const user = users[0];
-  if (!user || user.disabled) {
+  if (!user || user.disabled || user.deleted_at) {
     return { ok: false, error: "Invalid username or password" };
   }
   if (!bcrypt.compareSync(password, user.password_hash)) {
@@ -55,7 +55,8 @@ export async function getSessionUser(): Promise<PublicUser | null> {
   const rows = await sql<UserRow>(
     `SELECT u.* FROM sessions s
      JOIN users u ON u.id = s.user_id
-     WHERE s.token = $1 AND s.expires_at > $2 AND u.disabled = 0`,
+     WHERE s.token = $1 AND s.expires_at > $2
+       AND u.disabled = 0 AND u.deleted_at IS NULL`,
     [token, new Date().toISOString()],
   );
   const row = rows[0];

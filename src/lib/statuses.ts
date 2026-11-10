@@ -99,6 +99,8 @@ export const ATTEMPT_OUTCOMES = [
   "No Answer",
   "No Answer Voicemail",
   "DNC",
+  "Not interested",
+  "Already did project",
 ] as const;
 
 export type AttemptOutcome = (typeof ATTEMPT_OUTCOMES)[number];

@@ -18,10 +18,16 @@ export async function GET(req: Request) {
     const agentRaw = url.searchParams.get("agentId");
     const agentId = agentRaw ? Number(agentRaw) : null;
 
-    const agents = await sql<{ id: number; username: string; display_name: string }>(
-      `SELECT id, username, display_name FROM users
-       WHERE role = 'agent' AND disabled = 0
-       ORDER BY display_name`,
+    // Include soft-deleted agents so historical reports can still filter by them
+    const agents = await sql<{
+      id: number;
+      username: string;
+      display_name: string;
+      deleted_at: string | null;
+    }>(
+      `SELECT id, username, display_name, deleted_at FROM users
+       WHERE role = 'agent'
+       ORDER BY CASE WHEN deleted_at IS NULL THEN 0 ELSE 1 END, display_name`,
     );
 
     const report = await buildReports(range, agentId && Number.isFinite(agentId) ? agentId : null);

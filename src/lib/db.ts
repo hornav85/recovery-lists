@@ -200,6 +200,7 @@ export type UserRow = {
   display_name: string;
   role: "admin" | "agent";
   disabled: number;
+  deleted_at: string | null;
   created_at: string;
 };
 
@@ -210,6 +211,8 @@ export type PublicUser = {
   displayName: string;
   role: "admin" | "agent";
   disabled: boolean;
+  deleted: boolean;
+  deletedAt: string | null;
 };
 
 export function toPublicUser(u: UserRow): PublicUser {
@@ -220,5 +223,7 @@ export function toPublicUser(u: UserRow): PublicUser {
     displayName: u.display_name,
     role: u.role,
     disabled: !!u.disabled,
+    deleted: Boolean(u.deleted_at),
+    deletedAt: u.deleted_at || null,
   };
 }

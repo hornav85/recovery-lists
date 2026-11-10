@@ -237,6 +237,11 @@ textarea:focus {
   font-size: 0.85rem;
 }
 
+button.tab {
+  font: inherit;
+  cursor: pointer;
+}
+
 .tab.active,
 .tab:hover {
   color: var(--text);

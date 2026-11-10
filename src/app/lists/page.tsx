@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { ListDateControls } from "@/components/ListDateControls";
 import { ATTEMPT_BUCKETS, parseAttemptBucket, bucketLabel } from "@/lib/attempts";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
@@ -12,16 +13,23 @@ import {
   getQueueForStatus,
   type QueueLead,
 } from "@/lib/leads";
+import { applyQueueView, parseQueueSort, sortLabel } from "@/lib/queue-filters";
 
 function buildHref(opts: {
   status?: string;
   attempts?: string;
   view?: string;
+  sort?: string;
+  from?: string;
+  to?: string;
 }) {
   const p = new URLSearchParams();
   if (opts.view === "attempts") p.set("view", "attempts");
   if (opts.status) p.set("status", opts.status);
   if (opts.attempts) p.set("attempts", opts.attempts);
+  if (opts.sort && opts.sort !== "attempts") p.set("sort", opts.sort);
+  if (opts.from) p.set("from", opts.from);
+  if (opts.to) p.set("to", opts.to);
   const q = p.toString();
   return q ? `/lists?${q}` : "/lists";
 }
@@ -77,7 +85,14 @@ function QueueTable({ queue }: { queue: QueueLead[] }) {
 export default async function ListsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ status?: string; attempts?: string; view?: string }>;
+  searchParams: Promise<{
+    status?: string;
+    attempts?: string;
+    view?: string;
+    sort?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
   await ensureFixtureLeads();
   const user = await getSessionUser();
@@ -88,6 +103,9 @@ export default async function ListsPage({
   const sp = await searchParams;
   const view = sp.view === "attempts" ? "attempts" : "status";
   const attemptFilter = parseAttemptBucket(sp.attempts);
+  const sort = parseQueueSort(sp.sort);
+  const fromYmd = sp.from && /^\d{4}-\d{2}-\d{2}$/.test(sp.from) ? sp.from : "";
+  const toYmd = sp.to && /^\d{4}-\d{2}-\d{2}$/.test(sp.to) ? sp.to : "";
 
   const activeStatus =
     view === "status" ? sp.status || statuses[0]?.name || "" : "";
@@ -96,19 +114,18 @@ export default async function ListsPage({
       ? attemptFilter || attemptBuckets[0] || null
       : attemptFilter;
 
-  let queue: QueueLead[] = [];
+  let rawQueue: QueueLead[] = [];
   let bucketCounts: Record<string, number> = {};
   let title = "";
 
   if (view === "attempts" && activeAttemptBucket) {
-    const allowed =
-      user.role === "admin" ? null : statuses.map((s) => s.name);
-    queue = await getQueueForAttemptBucket(activeAttemptBucket, allowed);
+    const allowed = user.role === "admin" ? null : statuses.map((s) => s.name);
+    rawQueue = await getQueueForAttemptBucket(activeAttemptBucket, allowed);
     title = `${bucketLabel(activeAttemptBucket)} (all assigned statuses)`;
   } else if (activeStatus) {
     const full = await getQueueForStatus(activeStatus);
     bucketCounts = countByAttemptBucket(full);
-    queue = activeAttemptBucket
+    rawQueue = activeAttemptBucket
       ? await getQueueForStatus(activeStatus, activeAttemptBucket)
       : full;
     title = activeAttemptBucket
@@ -116,23 +133,45 @@ export default async function ListsPage({
       : activeStatus;
   }
 
+  const queue = applyQueueView(rawQueue, { sort, fromYmd, toYmd });
+
+  const persist = {
+    view: view === "attempts" ? "attempts" : undefined,
+    status: view === "status" ? activeStatus || undefined : undefined,
+    attempts: activeAttemptBucket || undefined,
+    sort: sort !== "attempts" ? sort : undefined,
+    from: fromYmd || undefined,
+    to: toYmd || undefined,
+  };
+
   return (
     <AppShell user={user}>
       <h1>Recovery lists</h1>
       <p className="muted">
-        Status lists and attempt filters. Queues sort fewest attempts first. Recovered/DNC and sheet
-        DNC stay hidden. <strong>Burned out</strong> = 6+ attempts.
+        Status lists and attempt filters. Sort by appointment date or fewest attempts. Recovered/DNC
+        and sheet DNC stay hidden. <strong>Burned out</strong> = 6+ attempts.
       </p>
 
       <div className="tabs" style={{ marginBottom: "0.5rem" }}>
         <Link
-          href={buildHref({ status: statuses[0]?.name })}
+          href={buildHref({
+            status: statuses[0]?.name,
+            sort: persist.sort,
+            from: persist.from,
+            to: persist.to,
+          })}
           className={`tab ${view === "status" ? "active" : ""}`}
         >
           By status
         </Link>
         <Link
-          href={buildHref({ view: "attempts", attempts: attemptBuckets[0] || "0" })}
+          href={buildHref({
+            view: "attempts",
+            attempts: attemptBuckets[0] || "0",
+            sort: persist.sort,
+            from: persist.from,
+            to: persist.to,
+          })}
           className={`tab ${view === "attempts" ? "active" : ""}`}
         >
           By attempts
@@ -157,6 +196,9 @@ export default async function ListsPage({
                 href={buildHref({
                   status: s.name,
                   attempts: activeAttemptBucket || undefined,
+                  sort: persist.sort,
+                  from: persist.from,
+                  to: persist.to,
                 })}
                 className={`tab ${s.name === activeStatus ? "active" : ""}`}
               >
@@ -167,18 +209,31 @@ export default async function ListsPage({
 
           <div className="tabs">
             <Link
-              href={buildHref({ status: activeStatus })}
+              href={buildHref({
+                status: activeStatus,
+                sort: persist.sort,
+                from: persist.from,
+                to: persist.to,
+              })}
               className={`tab ${!activeAttemptBucket ? "active" : ""}`}
             >
               All attempts
-              {activeStatus ? ` (${Object.values(bucketCounts).reduce((a, b) => a + b, 0) || queue.length})` : ""}
+              {activeStatus
+                ? ` (${Object.values(bucketCounts).reduce((a, b) => a + b, 0) || rawQueue.length})`
+                : ""}
             </Link>
             {ATTEMPT_BUCKETS.map((b) => {
               const count = bucketCounts[b.id] ?? 0;
               return (
                 <Link
                   key={b.id}
-                  href={buildHref({ status: activeStatus, attempts: b.id })}
+                  href={buildHref({
+                    status: activeStatus,
+                    attempts: b.id,
+                    sort: persist.sort,
+                    from: persist.from,
+                    to: persist.to,
+                  })}
                   className={`tab ${activeAttemptBucket === b.id ? "active" : ""} ${
                     b.id === "burned" ? "warn-tab" : ""
                   }`}
@@ -206,7 +261,13 @@ export default async function ListsPage({
               {attemptBuckets.map((id) => (
                 <Link
                   key={id}
-                  href={buildHref({ view: "attempts", attempts: id })}
+                  href={buildHref({
+                    view: "attempts",
+                    attempts: id,
+                    sort: persist.sort,
+                    from: persist.from,
+                    to: persist.to,
+                  })}
                   className={`tab ${activeAttemptBucket === id ? "active" : ""} ${
                     id === "burned" ? "warn-tab" : ""
                   }`}
@@ -224,11 +285,28 @@ export default async function ListsPage({
           <h2>
             {title}{" "}
             <span className="muted" style={{ fontWeight: 400 }}>
-              ({queue.length})
+              ({queue.length}
+              {queue.length !== rawQueue.length ? ` of ${rawQueue.length}` : ""})
             </span>
           </h2>
+
+          <ListDateControls
+            baseParams={{
+              view: view === "attempts" ? "attempts" : undefined,
+              status: view === "status" ? activeStatus || undefined : undefined,
+              attempts: activeAttemptBucket || undefined,
+            }}
+            sort={sort}
+            fromYmd={fromYmd}
+            toYmd={toYmd}
+          />
+
           <p className="muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
-            Sorted by fewest attempts first so agents can dial fresher leads before burned ones.
+            {sortLabel(sort)}
+            {fromYmd || toYmd
+              ? ` · appointment filter ${fromYmd || "…"} → ${toYmd || "…"}`
+              : ""}
+            .
           </p>
           <QueueTable queue={queue} />
         </div>
