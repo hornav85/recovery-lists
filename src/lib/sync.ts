@@ -332,8 +332,17 @@ export async function getSyncMeta() {
 }
 
 export function getSyncConfig() {
-  const appsScriptUrl = process.env.SHEETS_APPS_SCRIPT_URL?.trim() || "";
+  const appsScriptUrl = normalizeAppsScriptUrl(process.env.SHEETS_APPS_SCRIPT_URL || "");
   const appsScriptToken = process.env.SHEETS_APPS_SCRIPT_TOKEN?.trim() || "";
+  let appsScriptUrlValid = false;
+  if (appsScriptUrl) {
+    try {
+      const u = new URL(appsScriptUrl);
+      appsScriptUrlValid = u.protocol === "https:" && /\/exec\/?$/.test(u.pathname);
+    } catch {
+      appsScriptUrlValid = false;
+    }
+  }
   return {
     spreadsheetId:
       process.env.GOOGLE_SHEETS_SPREADSHEET_ID ||
@@ -342,8 +351,9 @@ export function getSyncConfig() {
       process.env.GOOGLE_SERVICE_ACCOUNT_FILE?.trim() &&
         fs.existsSync(process.env.GOOGLE_SERVICE_ACCOUNT_FILE.trim())
     ),
-    hasAppsScript: Boolean(appsScriptUrl && appsScriptToken),
+    hasAppsScript: Boolean(appsScriptUrlValid && appsScriptToken),
     appsScriptUrlConfigured: Boolean(appsScriptUrl),
+    appsScriptUrlValid,
     appsScriptTokenConfigured: Boolean(appsScriptToken),
   };
 }
@@ -388,16 +398,50 @@ export async function syncFromAppsScriptPayload(payload: {
   return { mode: "apps-script", rowsUpserted: upserted, dncMarked, lastSyncAt, message };
 }
 
+/** Normalize a Cursor secret / .env value into a usable Web app URL. */
+export function normalizeAppsScriptUrl(raw: string): string {
+  let s = raw.trim();
+  // Whole env line pasted by mistake
+  s = s.replace(/^SHEETS_APPS_SCRIPT_URL\s*=\s*/i, "").trim();
+  // Surrounding quotes from secret forms / copy-paste
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  // Accidental newlines / second line of paste
+  s = s.split(/\r?\n/)[0]?.trim() || "";
+  return s;
+}
+
 async function fetchAppsScriptJson(): Promise<{
   database: SheetObject[];
   dnc: SheetObject[];
   updatedAt?: string;
 } | null> {
-  const base = process.env.SHEETS_APPS_SCRIPT_URL?.trim();
+  const base = normalizeAppsScriptUrl(process.env.SHEETS_APPS_SCRIPT_URL || "");
   const token = process.env.SHEETS_APPS_SCRIPT_TOKEN?.trim();
   if (!base || !token) return null;
 
-  const url = new URL(base);
+  let url: URL;
+  try {
+    url = new URL(base);
+  } catch {
+    throw new Error(
+      "Invalid Apps Script URL — use the full Web app link ending in /exec (no quotes). Re-save SHEETS_APPS_SCRIPT_URL in Cursor Secrets.",
+    );
+  }
+  if (url.protocol !== "https:") {
+    throw new Error("Apps Script URL must start with https://");
+  }
+  if (!/\/exec\/?$/.test(url.pathname)) {
+    throw new Error(
+      "Apps Script URL should end with /exec (Deploy → Web app URL), not the script editor link",
+    );
+  }
+  // Drop any pasted ?token=…; we always attach the bound secret token
+  url.search = "";
   url.searchParams.set("token", token);
 
   const res = await fetch(url.toString(), {

@@ -13,6 +13,7 @@ type SyncMeta = {
   hasServiceAccount: boolean;
   hasAppsScript: boolean;
   appsScriptUrlConfigured: boolean;
+  appsScriptUrlValid?: boolean;
   appsScriptTokenConfigured: boolean;
   preferredMode: string;
 };
@@ -105,13 +106,13 @@ export default function AdminSyncPage() {
               <span className="badge ok">configured — Sync now uses live JSON</span>
             ) : (
               <span className="badge warn">
-                not set — add SHEETS_APPS_SCRIPT_URL + SHEETS_APPS_SCRIPT_TOKEN
-                {!meta?.appsScriptUrlConfigured && meta?.appsScriptTokenConfigured
-                  ? " (URL missing)"
-                  : ""}
-                {meta?.appsScriptUrlConfigured && !meta?.appsScriptTokenConfigured
-                  ? " (token missing)"
-                  : ""}
+                {meta?.appsScriptUrlConfigured && meta?.appsScriptUrlValid === false
+                  ? "URL invalid — re-save SHEETS_APPS_SCRIPT_URL as the full https …/exec Web app link (no quotes)"
+                  : !meta?.appsScriptUrlConfigured && meta?.appsScriptTokenConfigured
+                    ? "URL missing — add SHEETS_APPS_SCRIPT_URL in Cursor Secrets"
+                    : meta?.appsScriptUrlConfigured && !meta?.appsScriptTokenConfigured
+                      ? "token missing — add SHEETS_APPS_SCRIPT_TOKEN in Cursor Secrets"
+                      : "not set — add SHEETS_APPS_SCRIPT_URL + SHEETS_APPS_SCRIPT_TOKEN"}
               </span>
             )}
           </dd>
