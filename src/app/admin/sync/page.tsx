@@ -14,6 +14,8 @@ type SyncMeta = {
   hasAppsScript: boolean;
   appsScriptUrlConfigured: boolean;
   appsScriptUrlValid?: boolean;
+  appsScriptUrlHint?: string;
+  appsScriptUrlLength?: number;
   appsScriptTokenConfigured: boolean;
   preferredMode: string;
 };
@@ -107,7 +109,7 @@ export default function AdminSyncPage() {
             ) : (
               <span className="badge warn">
                 {meta?.appsScriptUrlConfigured && meta?.appsScriptUrlValid === false
-                  ? "URL invalid — re-save SHEETS_APPS_SCRIPT_URL as the full https …/exec Web app link (no quotes)"
+                  ? `URL invalid (${meta.appsScriptUrlHint || "bad value"}, len ${meta.appsScriptUrlLength ?? "?"}) — Cursor Secrets → SHEETS_APPS_SCRIPT_URL = Deploy → Web app https …/exec only`
                   : !meta?.appsScriptUrlConfigured && meta?.appsScriptTokenConfigured
                     ? "URL missing — add SHEETS_APPS_SCRIPT_URL in Cursor Secrets"
                     : meta?.appsScriptUrlConfigured && !meta?.appsScriptTokenConfigured
