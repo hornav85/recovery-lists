@@ -1,0 +1,10 @@
+node_modules
+.next
+data/*.db
+data/*.db-*
+data/pglite
+.env
+.env.local
+*.log
+.DS_Store
+tsconfig.tsbuildinfo
