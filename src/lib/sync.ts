@@ -334,7 +334,7 @@ export async function getSyncMeta() {
 export function getSyncConfig() {
   const rawUrl = process.env.SHEETS_APPS_SCRIPT_URL || "";
   const urlInfo = describeAppsScriptUrlSecret(rawUrl);
-  const appsScriptToken = process.env.SHEETS_APPS_SCRIPT_TOKEN?.trim() || "";
+  const appsScriptToken = normalizeAppsScriptToken(process.env.SHEETS_APPS_SCRIPT_TOKEN || "");
   return {
     spreadsheetId:
       process.env.GOOGLE_SHEETS_SPREADSHEET_ID ||
@@ -480,13 +480,29 @@ export function describeAppsScriptUrlSecret(raw: string): {
   }
 }
 
+/** Normalize token secret the same way as URL (quotes / env-line paste). */
+export function normalizeAppsScriptToken(raw: string): string {
+  let s = raw.trim().replace(/^\uFEFF/, "").replace(/[\u200B-\u200D\uFEFF]/g, "");
+  s = s.replace(/^SHEETS_APPS_SCRIPT_TOKEN\s*=\s*/i, "").trim();
+  s = s.replace(/^SYNC_TOKEN\s*=\s*/i, "").trim();
+  if (
+    (s.startsWith('"') && s.endsWith('"')) ||
+    (s.startsWith("'") && s.endsWith("'")) ||
+    (s.startsWith("<") && s.endsWith(">"))
+  ) {
+    s = s.slice(1, -1).trim();
+  }
+  s = s.split(/\r?\n/)[0]?.trim() || "";
+  return s;
+}
+
 async function fetchAppsScriptJson(): Promise<{
   database: SheetObject[];
   dnc: SheetObject[];
   updatedAt?: string;
 } | null> {
   const base = normalizeAppsScriptUrl(process.env.SHEETS_APPS_SCRIPT_URL || "");
-  const token = process.env.SHEETS_APPS_SCRIPT_TOKEN?.trim();
+  const token = normalizeAppsScriptToken(process.env.SHEETS_APPS_SCRIPT_TOKEN || "");
   if (!base || !token) return null;
 
   const info = describeAppsScriptUrlSecret(base);
@@ -522,7 +538,13 @@ async function fetchAppsScriptJson(): Promise<{
   }
 
   if (!res.ok || data.error || data.status === 401) {
-    throw new Error(data.error || `Apps Script HTTP ${res.status}`);
+    const err = data.error || `Apps Script HTTP ${res.status}`;
+    if (data.status === 401 || /unauthorized/i.test(err) || res.status === 401) {
+      throw new Error(
+        "Unauthorized — SHEETS_APPS_SCRIPT_TOKEN must exactly match Apps Script Project Settings → Script property SYNC_TOKEN. Update the token in https://cursor.com/dashboard/apps → recovery-lists → Secrets (don’t paste it in chat), then republish.",
+      );
+    }
+    throw new Error(err);
   }
 
   return {
