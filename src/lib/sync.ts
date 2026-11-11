@@ -349,7 +349,31 @@ export function getSyncConfig() {
   };
 }
 
+function fixturesAllowed(): boolean {
+  return !(
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.CURSOR_APP_ID?.trim()) ||
+    Boolean(process.env.VERCEL)
+  );
+}
+
+async function fixtureOrUnavailable(prefix?: string): Promise<SyncResult> {
+  if (!fixturesAllowed()) {
+    const message =
+      (prefix ? `${prefix}; ` : "") +
+      "sample data is disabled on the hosted app — paste CSV or configure Apps Script";
+    const lastSyncAt = await setSyncMeta("csv", message);
+    return { mode: "csv", rowsUpserted: 0, dncMarked: 0, lastSyncAt, message };
+  }
+  const result = await loadFixtureIntoDb();
+  if (!prefix) return result;
+  return { ...result, message: `${prefix}; ${result.message}` };
+}
+
 export async function loadFixtureIntoDb(): Promise<SyncResult> {
+  if (!fixturesAllowed()) {
+    throw new Error("Sample data load is disabled on the hosted app");
+  }
   const dbText = FIXTURE_DATABASE_CSV;
   const dncText = FIXTURE_DNC_CSV;
   const leads = cellsToLeadRows(parseCsv(dbText), true);
@@ -589,7 +613,7 @@ export async function runSync(opts?: {
     return syncFromCsvText(opts.csvDatabase, opts.csvDnc);
   }
   if (opts?.forceFixture) {
-    return loadFixtureIntoDb();
+    return fixtureOrUnavailable();
   }
 
   // Prefer Apps Script bridge (no Cloud billing) when configured
@@ -604,11 +628,9 @@ export async function runSync(opts?: {
     const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_FILE?.trim();
     const hasSa = Boolean(keyFile && fs.existsSync(keyFile));
     if (!hasSa) {
-      const fallback = await loadFixtureIntoDb();
-      return {
-        ...fallback,
-        message: `Apps Script sync failed (${msg}); loaded fixtures instead. CSV paste still works.`,
-      };
+      return fixtureOrUnavailable(
+        `Apps Script sync failed (${msg})`,
+      );
     }
     // else try google SA below
   }
@@ -625,14 +647,10 @@ export async function runSync(opts?: {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const fallback = await loadFixtureIntoDb();
-    return {
-      ...fallback,
-      message: `Google sync failed (${msg}); loaded fixtures instead`,
-    };
+    return fixtureOrUnavailable(`Google sync failed (${msg})`);
   }
 
-  return loadFixtureIntoDb();
+  return fixtureOrUnavailable();
 }
 
 /** Exported for unit-style checks without a live deploy. */

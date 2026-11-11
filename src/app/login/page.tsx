@@ -3,7 +3,7 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 
-/** Sign-in only — no HTTP first-admin bootstrap (use `npm run create-admin` offline). */
+/** Sign-in only. First admin is created offline (npm run create-admin), never over HTTP. */
 export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");

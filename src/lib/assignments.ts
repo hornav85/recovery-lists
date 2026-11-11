@@ -87,7 +87,7 @@ export async function assignmentsAsOf(
 }
 
 /** Bootstrap a day-one snapshot for every agent that has assignments but no history. */
-export async function bootstrapAssignmentSnapshots() {
+export async function ensureAssignmentSnapshots() {
   const users = await sql<{ id: number }>(
     `SELECT id FROM users WHERE role = 'agent' OR role = 'admin'`,
   );
