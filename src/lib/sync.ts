@@ -541,7 +541,7 @@ async function fetchAppsScriptJson(): Promise<{
     const err = data.error || `Apps Script HTTP ${res.status}`;
     if (data.status === 401 || /unauthorized/i.test(err) || res.status === 401) {
       throw new Error(
-        "Unauthorized — SHEETS_APPS_SCRIPT_TOKEN must exactly match Apps Script Project Settings → Script property SYNC_TOKEN. Update the token in https://cursor.com/dashboard/apps → recovery-lists → Secrets (don’t paste it in chat), then republish.",
+        "Unauthorized — SHEETS_APPS_SCRIPT_TOKEN does not match Apps Script SYNC_TOKEN. Copy the exact SHEETS_APPS_SCRIPT_TOKEN value from Project Context apps/recovery-lists/.env.local into https://cursor.com/dashboard/apps → recovery-lists → Secrets (don’t paste it in chat), then republish.",
       );
     }
     throw new Error(err);
