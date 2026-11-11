@@ -16,13 +16,17 @@ export async function POST(req: Request) {
     req.headers.get("x-real-ip") ||
     "unknown";
   const rateKey = `${username.toLowerCase()}|${ip}`;
-  if (!checkLoginRateLimit(rateKey)) {
-    return NextResponse.json(
-      { error: "Too many login attempts. Try again later." },
-      { status: 429 },
-    );
+  try {
+    if (!(await checkLoginRateLimit(rateKey))) {
+      return NextResponse.json(
+        { error: "Too many login attempts. Try again later." },
+        { status: 429 },
+      );
+    }
+    await recordLoginAttempt(rateKey);
+  } catch {
+    // If rate-limit table isn't migrated yet, continue (login still works)
   }
-  recordLoginAttempt(rateKey);
 
   const result = await login(username, password);
   if (!result.ok) {

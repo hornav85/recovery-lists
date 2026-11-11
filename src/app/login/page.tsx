@@ -6,10 +6,12 @@ import { useRouter } from "next/navigation";
 export default function LoginPage() {
   const router = useRouter();
   const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  const [setupSecretConfigured, setSetupSecretConfigured] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [email, setEmail] = useState("");
   const [displayName, setDisplayName] = useState("");
+  const [bootstrapSecret, setBootstrapSecret] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -18,7 +20,10 @@ export default function LoginPage() {
     fetch("/api/auth/setup")
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) setNeedsSetup(Boolean(data.needsSetup));
+        if (!cancelled) {
+          setNeedsSetup(Boolean(data.needsSetup));
+          setSetupSecretConfigured(Boolean(data.setupSecretConfigured));
+        }
       })
       .catch(() => {
         if (!cancelled) setNeedsSetup(false);
@@ -63,8 +68,17 @@ export default function LoginPage() {
     try {
       const res = await fetch("/api/auth/setup", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, email, password, displayName }),
+        headers: {
+          "Content-Type": "application/json",
+          "x-setup-bootstrap-secret": bootstrapSecret,
+        },
+        body: JSON.stringify({
+          username,
+          email,
+          password,
+          displayName,
+          bootstrapSecret,
+        }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -98,10 +112,25 @@ export default function LoginPage() {
         </h1>
         <p className="muted" style={{ marginTop: 0 }}>
           {needsSetup
-            ? "Create the first admin account. Choose a strong password — nothing is pre-seeded."
+            ? setupSecretConfigured
+              ? "Create the first admin. You need the setup bootstrap secret from app Secrets."
+              : "Setup is locked until SETUP_BOOTSTRAP_SECRET is set in Cursor App Secrets."
             : "Sign in with your admin or agent account."}
         </p>
         <form className="stack" onSubmit={needsSetup ? onSetup : onLogin}>
+          {needsSetup && (
+            <label className="field">
+              Setup secret
+              <input
+                type="password"
+                autoComplete="off"
+                value={bootstrapSecret}
+                onChange={(e) => setBootstrapSecret(e.target.value)}
+                required
+                disabled={!setupSecretConfigured}
+              />
+            </label>
+          )}
           <label className="field">
             Username
             <input
@@ -110,6 +139,7 @@ export default function LoginPage() {
               value={username}
               onChange={(e) => setUsername(e.target.value)}
               required
+              disabled={needsSetup && !setupSecretConfigured}
             />
           </label>
           {needsSetup && (
@@ -122,6 +152,7 @@ export default function LoginPage() {
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   required
+                  disabled={!setupSecretConfigured}
                 />
               </label>
               <label className="field">
@@ -131,6 +162,7 @@ export default function LoginPage() {
                   autoComplete="name"
                   value={displayName}
                   onChange={(e) => setDisplayName(e.target.value)}
+                  disabled={!setupSecretConfigured}
                 />
               </label>
             </>
@@ -144,10 +176,15 @@ export default function LoginPage() {
               onChange={(e) => setPassword(e.target.value)}
               required
               minLength={needsSetup ? 10 : undefined}
+              disabled={needsSetup && !setupSecretConfigured}
             />
           </label>
           {error && <div className="error">{error}</div>}
-          <button className="btn" type="submit" disabled={loading}>
+          <button
+            className="btn"
+            type="submit"
+            disabled={loading || (needsSetup && !setupSecretConfigured)}
+          >
             {loading
               ? needsSetup
                 ? "Creating…"

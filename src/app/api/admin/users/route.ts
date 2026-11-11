@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { AuthError, hashPassword, requireUser } from "@/lib/auth";
+import { AuthError, hashPassword, MIN_PASSWORD_LEN, requireUser } from "@/lib/auth";
 import { ensureFixtureLeads, sql, toPublicUser, type UserRow } from "@/lib/db";
 
 export async function GET() {
@@ -116,10 +116,18 @@ export async function PATCH(req: Request) {
       ]);
     }
     if (body.password != null && String(body.password).length > 0) {
-      await sql("UPDATE users SET password_hash = $1 WHERE id = $2", [
-        hashPassword(String(body.password)),
-        id,
-      ]);
+      const nextPassword = String(body.password);
+      if (nextPassword.length < MIN_PASSWORD_LEN) {
+        return NextResponse.json(
+          { error: `Password must be at least ${MIN_PASSWORD_LEN} characters` },
+          { status: 400 },
+        );
+      }
+      await sql(
+        "UPDATE users SET password_hash = $1, must_change_password = 1 WHERE id = $2",
+        [hashPassword(nextPassword), id],
+      );
+      await sql("DELETE FROM sessions WHERE user_id = $1", [id]);
     }
     if (body.role === "admin" || body.role === "agent") {
       if (id === admin.id && body.role !== "admin") {
