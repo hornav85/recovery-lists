@@ -6,7 +6,9 @@ import { sql, toPublicUser, type PublicUser, type UserRow } from "./db";
 const COOKIE = "rl_session";
 const SESSION_DAYS = 14;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 20;
+/** Per username+IP and per IP alone (Postgres-backed across instances). */
+const LOGIN_MAX_ATTEMPTS_USER = 8;
+const LOGIN_MAX_ATTEMPTS_IP = 30;
 const MIN_PASSWORD_LEN = 10;
 
 function cookieSecure(): boolean {
@@ -23,22 +25,51 @@ function sessionCookieOptions(expires: Date) {
   };
 }
 
-/** Shared across instances via Postgres. */
-export async function checkLoginRateLimit(key: string): Promise<boolean> {
+/** Shared across instances via Postgres. Returns false when over limit. */
+export async function checkLoginRateLimit(keys: {
+  userIp: string;
+  ip: string;
+}): Promise<boolean> {
   const cutoff = new Date(Date.now() - LOGIN_WINDOW_MS).toISOString();
   await sql("DELETE FROM login_attempts WHERE attempted_at < $1", [cutoff]);
-  const rows = await sql<{ c: string | number }>(
-    `SELECT COUNT(*) AS c FROM login_attempts
-     WHERE rate_key = $1 AND attempted_at >= $2`,
-    [key, cutoff],
-  );
-  return Number(rows[0]?.c ?? 0) < LOGIN_MAX_ATTEMPTS;
+
+  let locked = false;
+  try {
+    await sql("SELECT pg_advisory_lock($1)", [7272751]);
+    locked = true;
+  } catch {
+    locked = false;
+  }
+  try {
+    const userRows = await sql<{ c: string | number }>(
+      `SELECT COUNT(*) AS c FROM login_attempts
+       WHERE rate_key = $1 AND attempted_at >= $2`,
+      [keys.userIp, cutoff],
+    );
+    const ipRows = await sql<{ c: string | number }>(
+      `SELECT COUNT(*) AS c FROM login_attempts
+       WHERE rate_key = $1 AND attempted_at >= $2`,
+      [keys.ip, cutoff],
+    );
+    const userCount = Number(userRows[0]?.c ?? 0);
+    const ipCount = Number(ipRows[0]?.c ?? 0);
+    return userCount < LOGIN_MAX_ATTEMPTS_USER && ipCount < LOGIN_MAX_ATTEMPTS_IP;
+  } finally {
+    if (locked) {
+      await sql("SELECT pg_advisory_unlock($1)", [7272751]).catch(() => undefined);
+    }
+  }
 }
 
-export async function recordLoginAttempt(key: string) {
+export async function recordLoginAttempt(keys: { userIp: string; ip: string }) {
+  const now = new Date().toISOString();
   await sql("INSERT INTO login_attempts (rate_key, attempted_at) VALUES ($1, $2)", [
-    key,
-    new Date().toISOString(),
+    keys.userIp,
+    now,
+  ]);
+  await sql("INSERT INTO login_attempts (rate_key, attempted_at) VALUES ($1, $2)", [
+    keys.ip,
+    now,
   ]);
 }
 

@@ -1,13 +1,9 @@
 import fs from "fs";
-import path from "path";
 import { COL, rowFromCells, type LeadRow } from "./columns";
 import { sql } from "./db";
+import { FIXTURE_DATABASE_CSV, FIXTURE_DNC_CSV } from "./fixture-data";
 import { normalizeStatus } from "./statuses";
 import { prospectKey } from "./prospect";
-
-// Keep fixtures under src/ so they are never treated as statically servable public assets.
-const FIXTURE_DB = path.join(process.cwd(), "src", "server-data", "fixture-database.csv");
-const FIXTURE_DNC = path.join(process.cwd(), "src", "server-data", "fixture-dnc.csv");
 
 export type SyncResult = {
   mode: "google" | "apps-script" | "fixture" | "csv";
@@ -354,8 +350,8 @@ export function getSyncConfig() {
 }
 
 export async function loadFixtureIntoDb(): Promise<SyncResult> {
-  const dbText = fs.readFileSync(FIXTURE_DB, "utf8");
-  const dncText = fs.existsSync(FIXTURE_DNC) ? fs.readFileSync(FIXTURE_DNC, "utf8") : "";
+  const dbText = FIXTURE_DATABASE_CSV;
+  const dncText = FIXTURE_DNC_CSV;
   const leads = cellsToLeadRows(parseCsv(dbText), true);
   const dncKeys = dncText ? parseDncKeys(parseCsv(dncText), true) : new Set<string>();
   const { upserted, dncMarked } = await upsertLeads(leads, dncKeys);

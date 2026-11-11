@@ -15,17 +15,26 @@ export async function POST(req: Request) {
     req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
     req.headers.get("x-real-ip") ||
     "unknown";
-  const rateKey = `${username.toLowerCase()}|${ip}`;
+  const keys = {
+    userIp: `${username.toLowerCase()}|${ip}`,
+    ip: `ip|${ip}`,
+  };
   try {
-    if (!(await checkLoginRateLimit(rateKey))) {
+    if (!(await checkLoginRateLimit(keys))) {
       return NextResponse.json(
         { error: "Too many login attempts. Try again later." },
         { status: 429 },
       );
     }
-    await recordLoginAttempt(rateKey);
+    await recordLoginAttempt(keys);
   } catch {
-    // If rate-limit table isn't migrated yet, continue (login still works)
+    // Fail closed in production / hosted — do not skip throttling.
+    if (process.env.NODE_ENV === "production" || process.env.CURSOR_APP_ID) {
+      return NextResponse.json(
+        { error: "Login temporarily unavailable. Try again later." },
+        { status: 503 },
+      );
+    }
   }
 
   const result = await login(username, password);

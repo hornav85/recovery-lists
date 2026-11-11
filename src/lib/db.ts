@@ -64,10 +64,6 @@ async function seedIfEmpty() {
   }
 }
 
-export async function countUsers(): Promise<number> {
-  return countOf(await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM users"));
-}
-
 /** Rename/insert list tabs to match Column W spellings; re-normalize lead.status. */
 async function alignStatusesWithColumnW() {
   for (const name of SEED_STATUSES) {
