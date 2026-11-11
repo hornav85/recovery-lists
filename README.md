@@ -15,9 +15,14 @@ npm run dev
 
 Open **http://127.0.0.1:3000**
 
-### First admin (no default password)
+### First admin (no HTTP setup)
 
-On first launch with an empty users table, open **/login** and use the **Create admin** form. Choose your own username, email, and password (min 10 characters). Nothing is pre-seeded.
+There is no web “create admin” form (disabled for public hosting). Create the first admin offline:
+
+```bash
+ADMIN_USERNAME=admin ADMIN_EMAIL=you@example.com ADMIN_PASSWORD='at-least-10-chars' \
+  npm run create-admin
+```
 
 Accounts created later by an admin must change their password on first sign-in.
 

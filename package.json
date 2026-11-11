@@ -6,7 +6,7 @@
     "dev": "next dev -H 127.0.0.1 -p 3000",
     "build": "next build && node scripts/migrate.mjs",
     "start": "next start -H 127.0.0.1 -p 3000",
-    "seed": "tsx scripts/seed.ts",
+    "create-admin": "node scripts/create-admin.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

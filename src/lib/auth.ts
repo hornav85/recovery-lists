@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
-import { randomBytes, timingSafeEqual } from "crypto";
+import { randomBytes } from "crypto";
 import bcrypt from "bcryptjs";
-import { countUsers, sql, toPublicUser, type PublicUser, type UserRow } from "./db";
+import { sql, toPublicUser, type PublicUser, type UserRow } from "./db";
 
 const COOKIE = "rl_session";
 const SESSION_DAYS = 14;
@@ -23,14 +23,7 @@ function sessionCookieOptions(expires: Date) {
   };
 }
 
-function safeEqualString(a: string, b: string): boolean {
-  const ba = Buffer.from(a);
-  const bb = Buffer.from(b);
-  if (ba.length !== bb.length) return false;
-  return timingSafeEqual(ba, bb);
-}
-
-/** Shared across instances via Postgres (falls back soft-fail open only if DB errors). */
+/** Shared across instances via Postgres. */
 export async function checkLoginRateLimit(key: string): Promise<boolean> {
   const cutoff = new Date(Date.now() - LOGIN_WINDOW_MS).toISOString();
   await sql("DELETE FROM login_attempts WHERE attempted_at < $1", [cutoff]);
@@ -75,107 +68,6 @@ export async function login(
   const jar = await cookies();
   jar.set(COOKIE, token, sessionCookieOptions(expires));
   return { ok: true, user: toPublicUser(user) };
-}
-
-/** True on Cursor-hosted / production deploys — HTTP bootstrap must stay off. */
-export function isHostedDeployment(): boolean {
-  return (
-    process.env.NODE_ENV === "production" ||
-    Boolean(process.env.CURSOR_APP_ID?.trim()) ||
-    Boolean(process.env.VERCEL)
-  );
-}
-
-function requiredSetupBootstrapSecret(): string | null {
-  const secret = process.env.SETUP_BOOTSTRAP_SECRET?.trim() || "";
-  return secret || null;
-}
-
-/** Local/dev only: create the initial admin. Requires SETUP_BOOTSTRAP_SECRET. */
-export async function bootstrapAdmin(input: {
-  username: string;
-  email: string;
-  password: string;
-  displayName: string;
-  bootstrapSecret: string;
-}): Promise<{ ok: true; user: PublicUser } | { ok: false; error: string; status: number }> {
-  if (isHostedDeployment()) {
-    return { ok: false, error: "HTTP setup is disabled on the published app", status: 404 };
-  }
-  const expected = requiredSetupBootstrapSecret();
-  if (!expected) {
-    return {
-      ok: false,
-      error: "Setup locked — set SETUP_BOOTSTRAP_SECRET in app secrets first",
-      status: 503,
-    };
-  }
-  if (!safeEqualString(input.bootstrapSecret.trim(), expected)) {
-    return { ok: false, error: "Invalid setup secret", status: 401 };
-  }
-
-  // Serialize first-admin creation across instances (no-op on local PGlite)
-  let locked = false;
-  try {
-    await sql("SELECT pg_advisory_lock($1)", [7272750]);
-    locked = true;
-  } catch {
-    locked = false;
-  }
-  try {
-    const already = await sql<{ id: number }>("SELECT id FROM app_bootstrap WHERE id = 1");
-    if (already[0] || (await countUsers()) > 0) {
-      return { ok: false, error: "Setup already completed", status: 409 };
-    }
-    const username = input.username.trim();
-    const email = input.email.trim();
-    const password = input.password;
-    const displayName = input.displayName.trim() || username;
-    if (!username || !email || !password) {
-      return { ok: false, error: "username, email, and password required", status: 400 };
-    }
-    if (password.length < MIN_PASSWORD_LEN) {
-      return {
-        ok: false,
-        error: `Password must be at least ${MIN_PASSWORD_LEN} characters`,
-        status: 400,
-      };
-    }
-    const rows = await sql<UserRow>(
-      `INSERT INTO users (username, email, password_hash, display_name, role, must_change_password)
-       VALUES ($1, $2, $3, $4, 'admin', 0)
-       RETURNING *`,
-      [username, email, hashPassword(password), displayName],
-    );
-    const user = rows[0];
-    if (!user) return { ok: false, error: "Could not create admin", status: 500 };
-
-    try {
-      await sql(
-        `INSERT INTO app_bootstrap (id, completed_at, admin_user_id) VALUES (1, $1, $2)`,
-        [new Date().toISOString(), user.id],
-      );
-    } catch {
-      await sql("DELETE FROM users WHERE id = $1", [user.id]).catch(() => undefined);
-      return { ok: false, error: "Setup already completed", status: 409 };
-    }
-
-    const token = randomBytes(32).toString("hex");
-    const expires = new Date();
-    expires.setDate(expires.getDate() + SESSION_DAYS);
-    await sql("INSERT INTO sessions (token, user_id, expires_at) VALUES ($1, $2, $3)", [
-      token,
-      user.id,
-      expires.toISOString(),
-    ]);
-    const jar = await cookies();
-    jar.set(COOKIE, token, sessionCookieOptions(expires));
-    return { ok: true, user: toPublicUser(user) };
-  } finally {
-    if (locked) {
-      await sql("SELECT pg_advisory_unlock($1)", [7272750]).catch(() => undefined);
-    }
-  }
 }
 
 export async function changePassword(
