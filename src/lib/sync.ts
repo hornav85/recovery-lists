@@ -5,8 +5,9 @@ import { sql } from "./db";
 import { normalizeStatus } from "./statuses";
 import { prospectKey } from "./prospect";
 
-const FIXTURE_DB = path.join(process.cwd(), "data", "fixture-database.csv");
-const FIXTURE_DNC = path.join(process.cwd(), "data", "fixture-dnc.csv");
+// Keep fixtures under src/ so they are never treated as statically servable public assets.
+const FIXTURE_DB = path.join(process.cwd(), "src", "server-data", "fixture-database.csv");
+const FIXTURE_DNC = path.join(process.cwd(), "src", "server-data", "fixture-dnc.csv");
 
 export type SyncResult = {
   mode: "google" | "apps-script" | "fixture" | "csv";

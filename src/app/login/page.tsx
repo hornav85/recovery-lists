@@ -5,7 +5,8 @@ import { useRouter } from "next/navigation";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [needsSetup, setNeedsSetup] = useState<boolean | null>(null);
+  const [ready, setReady] = useState(false);
+  const [needsSetup, setNeedsSetup] = useState(false);
   const [setupSecretConfigured, setSetupSecretConfigured] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
@@ -20,13 +21,17 @@ export default function LoginPage() {
     fetch("/api/auth/setup")
       .then((r) => r.json())
       .then((data) => {
-        if (!cancelled) {
-          setNeedsSetup(Boolean(data.needsSetup));
-          setSetupSecretConfigured(Boolean(data.setupSecretConfigured));
-        }
+        if (cancelled) return;
+        // Hosted apps always report setup disabled / needsSetup false.
+        setNeedsSetup(Boolean(data.needsSetup) && !data.setupDisabled);
+        setSetupSecretConfigured(Boolean(data.setupSecretConfigured));
+        setReady(true);
       })
       .catch(() => {
-        if (!cancelled) setNeedsSetup(false);
+        if (!cancelled) {
+          setNeedsSetup(false);
+          setReady(true);
+        }
       });
     return () => {
       cancelled = true;
@@ -94,7 +99,7 @@ export default function LoginPage() {
     }
   }
 
-  if (needsSetup === null) {
+  if (!ready) {
     return (
       <div className="login-wrap">
         <div className="card login-card">
@@ -113,8 +118,8 @@ export default function LoginPage() {
         <p className="muted" style={{ marginTop: 0 }}>
           {needsSetup
             ? setupSecretConfigured
-              ? "Create the first admin. You need the setup bootstrap secret from app Secrets."
-              : "Setup is locked until SETUP_BOOTSTRAP_SECRET is set in Cursor App Secrets."
+              ? "Local first-admin setup. Enter the bootstrap secret, then create your admin."
+              : "Local setup is locked until SETUP_BOOTSTRAP_SECRET is set."
             : "Sign in with your admin or agent account."}
         </p>
         <form className="stack" onSubmit={needsSetup ? onSetup : onLogin}>

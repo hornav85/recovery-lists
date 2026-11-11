@@ -77,12 +77,21 @@ export async function login(
   return { ok: true, user: toPublicUser(user) };
 }
 
+/** True on Cursor-hosted / production deploys — HTTP bootstrap must stay off. */
+export function isHostedDeployment(): boolean {
+  return (
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.CURSOR_APP_ID?.trim()) ||
+    Boolean(process.env.VERCEL)
+  );
+}
+
 function requiredSetupBootstrapSecret(): string | null {
   const secret = process.env.SETUP_BOOTSTRAP_SECRET?.trim() || "";
   return secret || null;
 }
 
-/** First-run only: create the initial admin. Requires SETUP_BOOTSTRAP_SECRET. */
+/** Local/dev only: create the initial admin. Requires SETUP_BOOTSTRAP_SECRET. */
 export async function bootstrapAdmin(input: {
   username: string;
   email: string;
@@ -90,6 +99,9 @@ export async function bootstrapAdmin(input: {
   displayName: string;
   bootstrapSecret: string;
 }): Promise<{ ok: true; user: PublicUser } | { ok: false; error: string; status: number }> {
+  if (isHostedDeployment()) {
+    return { ok: false, error: "HTTP setup is disabled on the published app", status: 404 };
+  }
   const expected = requiredSetupBootstrapSecret();
   if (!expected) {
     return {
@@ -102,7 +114,7 @@ export async function bootstrapAdmin(input: {
     return { ok: false, error: "Invalid setup secret", status: 401 };
   }
 
-  // Serialize first-admin creation across hosted instances (no-op on local PGlite)
+  // Serialize first-admin creation across instances (no-op on local PGlite)
   let locked = false;
   try {
     await sql("SELECT pg_advisory_lock($1)", [7272750]);
@@ -111,7 +123,8 @@ export async function bootstrapAdmin(input: {
     locked = false;
   }
   try {
-    if ((await countUsers()) > 0) {
+    const already = await sql<{ id: number }>("SELECT id FROM app_bootstrap WHERE id = 1");
+    if (already[0] || (await countUsers()) > 0) {
       return { ok: false, error: "Setup already completed", status: 409 };
     }
     const username = input.username.trim();
@@ -136,6 +149,16 @@ export async function bootstrapAdmin(input: {
     );
     const user = rows[0];
     if (!user) return { ok: false, error: "Could not create admin", status: 500 };
+
+    try {
+      await sql(
+        `INSERT INTO app_bootstrap (id, completed_at, admin_user_id) VALUES (1, $1, $2)`,
+        [new Date().toISOString(), user.id],
+      );
+    } catch {
+      await sql("DELETE FROM users WHERE id = $1", [user.id]).catch(() => undefined);
+      return { ok: false, error: "Setup already completed", status: 409 };
+    }
 
     const token = randomBytes(32).toString("hex");
     const expires = new Date();
