@@ -13,6 +13,7 @@ import {
   getQueueForStatus,
   type QueueLead,
 } from "@/lib/leads";
+import { PhoneLink } from "@/components/PhoneLink";
 import { applyQueueView, parseQueueSort, sortLabel } from "@/lib/queue-filters";
 
 function buildHref(opts: {
@@ -56,7 +57,9 @@ function QueueTable({ queue }: { queue: QueueLead[] }) {
             <td>
               <Link href={`/leads/${lead.id}`}>{lead.name || "—"}</Link>
             </td>
-            <td>{lead.phone || "—"}</td>
+            <td>
+              <PhoneLink phone={lead.phone} />
+            </td>
             <td>
               <span className="badge">{lead.status || "—"}</span>
             </td>

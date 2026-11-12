@@ -169,6 +169,8 @@ export async function ensureReady() {
     await sql("SELECT 1");
     await seedIfEmpty();
     await alignStatusesWithColumnW();
+    const { ensureStoredPhonesNormalized } = await import("./phone");
+    await ensureStoredPhonesNormalized();
     const { ensureAssignmentSnapshots } = await import("./assignments");
     await ensureAssignmentSnapshots();
   })().catch((error: unknown) => {
