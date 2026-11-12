@@ -253,8 +253,8 @@ export async function getAssignedStatuses(userId: number, role: string) {
 }
 
 /**
- * Agents may only open/log leads that appear in their assigned status lists
- * or assigned attempt-bucket queues (same rules as /api/lists).
+ * Agents may only open/log leads that appear in their assigned queues
+ * (status lists and/or attempt-bucket lists) — same rules as /api/lists.
  */
 export async function agentCanAccessLead(
   user: PublicUser,
@@ -269,17 +269,27 @@ export async function agentCanAccessLead(
   const assignedStatuses = await getAssignedStatuses(user.id, user.role);
   const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
   const statusMatch = statusNames.includes(normalizeStatus(lead.status));
-  if (statusMatch) return true;
 
   const buckets = await getAssignedAttemptBuckets(user.id, user.role);
-  if (buckets.length === 0) return false;
-
-  const counts = await attemptCountsByProspect();
-  const attemptCount = counts.get(lead.prospect_key) || 0;
+  const countRows = await sql<{ c: string | number }>(
+    `SELECT COUNT(*) AS c FROM call_attempts WHERE prospect_key = $1`,
+    [lead.prospect_key],
+  );
+  const attemptCount = Number(countRows[0]?.c || 0);
   const bucket = bucketForCount(attemptCount);
-  if (!buckets.includes(bucket)) return false;
+  const bucketMatch = buckets.includes(bucket);
 
-  // Attempt queues for agents with status assignments are status-filtered.
-  if (statusNames.length === 0) return true;
-  return statusMatch;
+  // Status-list access: status must be assigned. If the agent also has
+  // attempt-bucket assignments, the lead must fall in one of those buckets.
+  if (statusMatch) {
+    if (buckets.length === 0) return true;
+    return bucketMatch;
+  }
+
+  // Attempt-queue-only agents (no status lists): bucket assignment is enough.
+  if (statusNames.length === 0 && buckets.length > 0) {
+    return bucketMatch;
+  }
+
+  return false;
 }
