@@ -6,6 +6,7 @@ import {
 import { sql, type PublicUser } from "./db";
 import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
 import { activeSortValue } from "./prospect";
+import { pacificYmd } from "./time";
 
 export type LeadDb = {
   id: number;
@@ -67,11 +68,25 @@ async function latestAttemptByProspect(): Promise<Map<string, AttemptRow>> {
   return new Map(rows.map((r) => [r.prospect_key, r]));
 }
 
+/** One dial day (Pacific) counts as one attempt — same-day edits don't inflate the count. */
 async function attemptCountsByProspect(): Promise<Map<string, number>> {
   const rows = await sql<{ prospect_key: string; c: string | number }>(
-    `SELECT prospect_key, COUNT(*) AS c FROM call_attempts GROUP BY prospect_key`,
+    `SELECT prospect_key,
+            COUNT(DISTINCT (created_at::timestamptz AT TIME ZONE 'America/Los_Angeles')::date) AS c
+     FROM call_attempts
+     GROUP BY prospect_key`,
   );
   return new Map(rows.map((r) => [r.prospect_key, Number(r.c)]));
+}
+
+export async function attemptCountForProspect(prospectKey: string): Promise<number> {
+  const rows = await sql<{ c: string | number }>(
+    `SELECT COUNT(DISTINCT (created_at::timestamptz AT TIME ZONE 'America/Los_Angeles')::date) AS c
+     FROM call_attempts
+     WHERE prospect_key = $1`,
+    [prospectKey],
+  );
+  return Number(rows[0]?.c || 0);
 }
 
 async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
@@ -108,14 +123,23 @@ async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
   return active;
 }
 
-/** True if lead should be hidden from queues. */
+/**
+ * True if lead should be hidden from queues.
+ * Recovered / DNC attempt outcomes stay visible through the Pacific calendar day
+ * they were logged, then drop off the next day. Sheet DNC still hides immediately.
+ */
 export function isHiddenLead(
   lead: LeadDb,
-  latestAttempt: AttemptRow | undefined
+  latestAttempt: AttemptRow | undefined,
+  todayYmd: string = pacificYmd(),
 ): boolean {
   if (lead.is_dnc) return true;
   if ((lead.status || "").toUpperCase() === "DNC") return true;
-  if (latestAttempt && HIDDEN_OUTCOMES.has(latestAttempt.outcome)) return true;
+  if (latestAttempt && HIDDEN_OUTCOMES.has(latestAttempt.outcome)) {
+    const attemptDay = pacificYmd(new Date(latestAttempt.created_at));
+    if (attemptDay < todayYmd) return true;
+    return false;
+  }
   return false;
 }
 
@@ -255,6 +279,10 @@ export async function getAssignedStatuses(userId: number, role: string) {
 /**
  * Agents may only open/log leads that appear in their assigned queues
  * (status lists and/or attempt-bucket lists) — same rules as /api/lists.
+ *
+ * Status check uses the active (newest) sheet row for the prospect — the same
+ * row Lists shows — so logging never fails with "Not assigned" when the agent
+ * can already see the lead on their status list.
  */
 export async function agentCanAccessLead(
   user: PublicUser,
@@ -266,29 +294,31 @@ export async function agentCanAccessLead(
   const lead = leads[0];
   if (!lead) return false;
 
-  const assignedStatuses = await getAssignedStatuses(user.id, user.role);
-  const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
-  const statusMatch = statusNames.includes(normalizeStatus(lead.status));
-
-  const buckets = await getAssignedAttemptBuckets(user.id, user.role);
-  const countRows = await sql<{ c: string | number }>(
-    `SELECT COUNT(*) AS c FROM call_attempts WHERE prospect_key = $1`,
+  const siblings = await sql<LeadDb>(
+    `SELECT * FROM leads WHERE prospect_key = $1`,
     [lead.prospect_key],
   );
-  const attemptCount = Number(countRows[0]?.c || 0);
-  const bucket = bucketForCount(attemptCount);
-  const bucketMatch = buckets.includes(bucket);
+  siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
+  const active = siblings[0] || lead;
 
-  // Status-list access: status must be assigned. If the agent also has
-  // attempt-bucket assignments, the lead must fall in one of those buckets.
+  const assignedStatuses = await getAssignedStatuses(user.id, user.role);
+  const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
+  // Match queue membership: active row status, or the opened row's status.
+  const statusMatch =
+    statusNames.includes(normalizeStatus(active.status)) ||
+    statusNames.includes(normalizeStatus(lead.status));
+
+  // Status assignment covers All attempts. Attempt buckets only filter the
+  // "By attempts" view — they must not block dialing after 0→1.
   if (statusMatch) {
-    if (buckets.length === 0) return true;
-    return bucketMatch;
+    return true;
   }
 
-  // Attempt-queue-only agents (no status lists): bucket assignment is enough.
+  const buckets = await getAssignedAttemptBuckets(user.id, user.role);
   if (statusNames.length === 0 && buckets.length > 0) {
-    return bucketMatch;
+    const attemptCount = await attemptCountForProspect(lead.prospect_key);
+    const bucket = bucketForCount(attemptCount);
+    return buckets.includes(bucket);
   }
 
   return false;
