@@ -148,8 +148,11 @@ export default async function ListsPage({
     <AppShell user={user}>
       <h1>Recovery lists</h1>
       <p className="muted">
-        Status lists and attempt filters. Sort by appointment date or fewest attempts. Recovered/DNC
-        and sheet DNC stay hidden. <strong>Burned out</strong> = 6+ attempts.
+        Status lists and attempt filters. Sort by appointment date or fewest attempts.{" "}
+        <strong>All attempts</strong> keeps dialed leads visible through the end of the Pacific day
+        (including Recovered/DNC); they drop off the next day. Sheet DNC hides immediately.{" "}
+        <strong>0 attempts</strong> moves a lead after a real dial. Same-day outcome edits replace
+        today&apos;s result (no double count). <strong>Burned out</strong> = 6+ dial days.
       </p>
 
       <div className="tabs" style={{ marginBottom: "0.5rem" }}>
@@ -301,13 +304,31 @@ export default async function ListsPage({
             toYmd={toYmd}
           />
 
-          <p className="muted" style={{ marginTop: 0, fontSize: "0.85rem" }}>
-            {sortLabel(sort)}
-            {fromYmd || toYmd
-              ? ` · appointment filter ${fromYmd || "…"} → ${toYmd || "…"}`
-              : ""}
-            .
-          </p>
+          <div
+            className="row"
+            style={{ marginTop: 0, marginBottom: "0.75rem", justifyContent: "space-between" }}
+          >
+            <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
+              {sortLabel(sort)}
+              {fromYmd || toYmd
+                ? ` · appointment filter ${fromYmd || "…"} → ${toYmd || "…"}`
+                : ""}
+              .
+            </p>
+            <a
+              className="btn secondary"
+              href={`/api/lists/export?${new URLSearchParams({
+                ...(view === "attempts" ? { view: "attempts" } : {}),
+                ...(view === "status" && activeStatus ? { status: activeStatus } : {}),
+                ...(activeAttemptBucket ? { attempts: activeAttemptBucket } : {}),
+                ...(sort !== "attempts" ? { sort } : {}),
+                ...(fromYmd ? { from: fromYmd } : {}),
+                ...(toYmd ? { to: toYmd } : {}),
+              }).toString()}`}
+            >
+              Download CSV
+            </a>
+          </div>
           <QueueTable queue={queue} />
         </div>
       )}

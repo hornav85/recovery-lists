@@ -178,7 +178,8 @@ export default async function LeadPage({
 
       {hidden && (
         <div className="error" style={{ marginBottom: "1rem" }}>
-          This prospect is hidden from queues (Recovered, DNC attempt, or sheet DNC).
+          This prospect is hidden from queues (sheet DNC, or Recovered/DNC from a prior day).
+          Same-day Recovered/DNC stay on All attempts until the Pacific day ends.
         </div>
       )}
 

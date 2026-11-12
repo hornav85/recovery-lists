@@ -6,13 +6,17 @@ import { ATTEMPT_OUTCOMES } from "@/lib/statuses";
 
 export function AttemptForm({ leadId }: { leadId: number }) {
   const router = useRouter();
-  const [outcome, setOutcome] = useState<string>(ATTEMPT_OUTCOMES[0]);
+  const [outcome, setOutcome] = useState<string>("");
   const [notes, setNotes] = useState("");
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!outcome) {
+      setError("Choose an outcome before saving");
+      return;
+    }
     setSaving(true);
     setError("");
     try {
@@ -28,6 +32,7 @@ export function AttemptForm({ leadId }: { leadId: number }) {
       }
       setNotes("");
       router.refresh();
+      // Stay on lists so Recovered/DNC remain visible through end of day.
       if (outcome === "Recovered" || outcome === "DNC") {
         router.push("/lists");
       }
@@ -42,7 +47,8 @@ export function AttemptForm({ leadId }: { leadId: number }) {
     <form className="stack" onSubmit={onSubmit}>
       <label className="field">
         Outcome
-        <select value={outcome} onChange={(e) => setOutcome(e.target.value)}>
+        <select value={outcome} onChange={(e) => setOutcome(e.target.value)} required>
+          <option value="">Pending — choose outcome</option>
           {ATTEMPT_OUTCOMES.map((o) => (
             <option key={o} value={o}>
               {o}
@@ -55,11 +61,12 @@ export function AttemptForm({ leadId }: { leadId: number }) {
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
       <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
-        Timestamp and your display name are stamped automatically on save. Attempts stay in SQLite
-        only — never written to Google Sheets.
+        Timestamp and your display name are stamped automatically. Same prospect, same day:
+        saving again replaces today&apos;s outcome (does not add a second attempt). Attempts stay
+        in the app database only — never written to Google Sheets.
       </p>
       {error && <div className="error">{error}</div>}
-      <button className="btn" type="submit" disabled={saving}>
+      <button className="btn" type="submit" disabled={saving || !outcome}>
         {saving ? "Saving…" : "Log attempt"}
       </button>
     </form>

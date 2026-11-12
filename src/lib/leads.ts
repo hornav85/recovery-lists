@@ -6,6 +6,7 @@ import {
 import { sql, type PublicUser } from "./db";
 import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
 import { activeSortValue } from "./prospect";
+import { pacificYmd } from "./time";
 
 export type LeadDb = {
   id: number;
@@ -67,11 +68,25 @@ async function latestAttemptByProspect(): Promise<Map<string, AttemptRow>> {
   return new Map(rows.map((r) => [r.prospect_key, r]));
 }
 
+/** One dial day (Pacific) counts as one attempt — same-day edits don't inflate the count. */
 async function attemptCountsByProspect(): Promise<Map<string, number>> {
   const rows = await sql<{ prospect_key: string; c: string | number }>(
-    `SELECT prospect_key, COUNT(*) AS c FROM call_attempts GROUP BY prospect_key`,
+    `SELECT prospect_key,
+            COUNT(DISTINCT (created_at::timestamptz AT TIME ZONE 'America/Los_Angeles')::date) AS c
+     FROM call_attempts
+     GROUP BY prospect_key`,
   );
   return new Map(rows.map((r) => [r.prospect_key, Number(r.c)]));
+}
+
+export async function attemptCountForProspect(prospectKey: string): Promise<number> {
+  const rows = await sql<{ c: string | number }>(
+    `SELECT COUNT(DISTINCT (created_at::timestamptz AT TIME ZONE 'America/Los_Angeles')::date) AS c
+     FROM call_attempts
+     WHERE prospect_key = $1`,
+    [prospectKey],
+  );
+  return Number(rows[0]?.c || 0);
 }
 
 async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
@@ -108,14 +123,23 @@ async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
   return active;
 }
 
-/** True if lead should be hidden from queues. */
+/**
+ * True if lead should be hidden from queues.
+ * Recovered / DNC attempt outcomes stay visible through the Pacific calendar day
+ * they were logged, then drop off the next day. Sheet DNC still hides immediately.
+ */
 export function isHiddenLead(
   lead: LeadDb,
-  latestAttempt: AttemptRow | undefined
+  latestAttempt: AttemptRow | undefined,
+  todayYmd: string = pacificYmd(),
 ): boolean {
   if (lead.is_dnc) return true;
   if ((lead.status || "").toUpperCase() === "DNC") return true;
-  if (latestAttempt && HIDDEN_OUTCOMES.has(latestAttempt.outcome)) return true;
+  if (latestAttempt && HIDDEN_OUTCOMES.has(latestAttempt.outcome)) {
+    const attemptDay = pacificYmd(new Date(latestAttempt.created_at));
+    if (attemptDay < todayYmd) return true;
+    return false;
+  }
   return false;
 }
 
@@ -271,11 +295,7 @@ export async function agentCanAccessLead(
   const statusMatch = statusNames.includes(normalizeStatus(lead.status));
 
   const buckets = await getAssignedAttemptBuckets(user.id, user.role);
-  const countRows = await sql<{ c: string | number }>(
-    `SELECT COUNT(*) AS c FROM call_attempts WHERE prospect_key = $1`,
-    [lead.prospect_key],
-  );
-  const attemptCount = Number(countRows[0]?.c || 0);
+  const attemptCount = await attemptCountForProspect(lead.prospect_key);
   const bucket = bucketForCount(attemptCount);
   const bucketMatch = buckets.includes(bucket);
 
