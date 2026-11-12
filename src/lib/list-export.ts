@@ -17,6 +17,7 @@ export function queueToCsv(
     sort?: string | null;
     from?: string | null;
     to?: string | null;
+    search?: string | null;
   },
 ): string {
   const lines: string[] = [];
@@ -30,6 +31,7 @@ export function queueToCsv(
     lines.push(`Appointment from,${esc(meta.from || "")}`);
     lines.push(`Appointment to,${esc(meta.to || "")}`);
   }
+  if (meta.search) lines.push(`Search,${esc(meta.search)}`);
   lines.push(`Rows,${queue.length}`);
   lines.push(`Generated,${esc(new Date().toISOString())}`);
   lines.push("");

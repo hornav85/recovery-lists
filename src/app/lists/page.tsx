@@ -1,20 +1,23 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AdminLeadSearch } from "@/components/AdminLeadSearch";
 import { AppShell } from "@/components/AppShell";
 import { ListDateControls } from "@/components/ListDateControls";
+import { PhoneLink } from "@/components/PhoneLink";
 import { ATTEMPT_BUCKETS, parseAttemptBucket, bucketLabel } from "@/lib/attempts";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
 import {
   countByAttemptBucket,
+  getAllVisibleLeads,
   getAssignedAttemptBuckets,
   getAssignedStatuses,
   getQueueForAttemptBucket,
   getQueueForStatus,
   type QueueLead,
 } from "@/lib/leads";
-import { PhoneLink } from "@/components/PhoneLink";
-import { applyQueueView, parseQueueSort, sortLabel } from "@/lib/queue-filters";
+import { applyQueueView, filterQueueBySearch, parseQueueSort, sortLabel } from "@/lib/queue-filters";
+import { normalizeStatus } from "@/lib/statuses";
 
 function buildHref(opts: {
   status?: string;
@@ -23,6 +26,8 @@ function buildHref(opts: {
   sort?: string;
   from?: string;
   to?: string;
+  q?: string;
+  find?: string;
 }) {
   const p = new URLSearchParams();
   if (opts.view === "attempts") p.set("view", "attempts");
@@ -31,18 +36,29 @@ function buildHref(opts: {
   if (opts.sort && opts.sort !== "attempts") p.set("sort", opts.sort);
   if (opts.from) p.set("from", opts.from);
   if (opts.to) p.set("to", opts.to);
+  if (opts.q) p.set("q", opts.q);
+  if (opts.find) p.set("find", opts.find);
   const q = p.toString();
   return q ? `/lists?${q}` : "/lists";
 }
 
-function QueueTable({ queue }: { queue: QueueLead[] }) {
+function QueueTable({
+  queue,
+  showList = false,
+  empty = "No visible leads in this list.",
+}: {
+  queue: QueueLead[];
+  showList?: boolean;
+  empty?: string;
+}) {
   if (queue.length === 0) {
-    return <p className="muted">No visible leads in this list.</p>;
+    return <p className="muted">{empty}</p>;
   }
   return (
     <table className="table">
       <thead>
         <tr>
+          {showList ? <th>List</th> : null}
           <th>Name</th>
           <th>Phone</th>
           <th>Status</th>
@@ -54,6 +70,11 @@ function QueueTable({ queue }: { queue: QueueLead[] }) {
       <tbody>
         {queue.map((lead) => (
           <tr key={lead.id}>
+            {showList ? (
+              <td>
+                <span className="badge">{normalizeStatus(lead.status) || "—"}</span>
+              </td>
+            ) : null}
             <td>
               <Link href={`/leads/${lead.id}`}>{lead.name || "—"}</Link>
             </td>
@@ -95,6 +116,8 @@ export default async function ListsPage({
     sort?: string;
     from?: string;
     to?: string;
+    q?: string;
+    find?: string;
   }>;
 }) {
   const user = await getSessionUser();
@@ -109,6 +132,11 @@ export default async function ListsPage({
   const sort = parseQueueSort(sp.sort);
   const fromYmd = sp.from && /^\d{4}-\d{2}-\d{2}$/.test(sp.from) ? sp.from : "";
   const toYmd = sp.to && /^\d{4}-\d{2}-\d{2}$/.test(sp.to) ? sp.to : "";
+  const searchQuery = user.role === "admin" ? (sp.q || "").trim() : "";
+  const findQuery = user.role === "admin" ? (sp.find || "").trim() : "";
+  const allMatches = findQuery
+    ? filterQueueBySearch(await getAllVisibleLeads(), findQuery)
+    : [];
 
   const activeStatus =
     view === "status" ? sp.status || statuses[0]?.name || "" : "";
@@ -136,7 +164,8 @@ export default async function ListsPage({
       : activeStatus;
   }
 
-  const queue = applyQueueView(rawQueue, { sort, fromYmd, toYmd });
+  const viewed = applyQueueView(rawQueue, { sort, fromYmd, toYmd });
+  const queue = searchQuery ? filterQueueBySearch(viewed, searchQuery) : viewed;
 
   const persist = {
     view: view === "attempts" ? "attempts" : undefined,
@@ -145,11 +174,50 @@ export default async function ListsPage({
     sort: sort !== "attempts" ? sort : undefined,
     from: fromYmd || undefined,
     to: toYmd || undefined,
+    q: searchQuery || undefined,
+    find: findQuery || undefined,
   };
 
   return (
     <AppShell user={user}>
       <h1>Recovery lists</h1>
+      {user.role === "admin" ? (
+        <>
+          <AdminLeadSearch
+            query={findQuery}
+            paramName="find"
+            label="Search all lists"
+            placeholder="Name, phone, or any lead field"
+            baseParams={{
+              view: view === "attempts" ? "attempts" : undefined,
+              status: view === "status" ? activeStatus || undefined : undefined,
+              attempts: activeAttemptBucket || undefined,
+              sort: sort !== "attempts" ? sort : undefined,
+              from: fromYmd || undefined,
+              to: toYmd || undefined,
+              q: searchQuery || undefined,
+            }}
+          />
+          {findQuery ? (
+            <div className="card">
+              <h2>
+                All lists{" "}
+                <span className="muted" style={{ fontWeight: 400 }}>
+                  ({allMatches.length})
+                </span>
+              </h2>
+              <p className="muted" style={{ marginTop: 0 }}>
+                Matches for “{findQuery}” in every list.
+              </p>
+              <QueueTable
+                queue={allMatches}
+                showList
+                empty="No leads match in any list."
+              />
+            </div>
+          ) : null}
+        </>
+      ) : null}
       <p className="muted">
         Status lists and attempt filters. Sort by appointment date or fewest attempts.{" "}
         <strong>All attempts</strong> keeps dialed leads visible through the end of the Pacific day
@@ -165,6 +233,8 @@ export default async function ListsPage({
             sort: persist.sort,
             from: persist.from,
             to: persist.to,
+            q: persist.q,
+            find: persist.find,
           })}
           className={`tab ${view === "status" ? "active" : ""}`}
         >
@@ -177,6 +247,8 @@ export default async function ListsPage({
             sort: persist.sort,
             from: persist.from,
             to: persist.to,
+            q: persist.q,
+            find: persist.find,
           })}
           className={`tab ${view === "attempts" ? "active" : ""}`}
         >
@@ -205,6 +277,8 @@ export default async function ListsPage({
                   sort: persist.sort,
                   from: persist.from,
                   to: persist.to,
+                  q: persist.q,
+            find: persist.find,
                 })}
                 className={`tab ${s.name === activeStatus ? "active" : ""}`}
               >
@@ -220,6 +294,8 @@ export default async function ListsPage({
                 sort: persist.sort,
                 from: persist.from,
                 to: persist.to,
+                q: persist.q,
+            find: persist.find,
               })}
               className={`tab ${!activeAttemptBucket ? "active" : ""}`}
             >
@@ -239,6 +315,8 @@ export default async function ListsPage({
                     sort: persist.sort,
                     from: persist.from,
                     to: persist.to,
+                    q: persist.q,
+            find: persist.find,
                   })}
                   className={`tab ${activeAttemptBucket === b.id ? "active" : ""} ${
                     b.id === "burned" ? "warn-tab" : ""
@@ -273,6 +351,8 @@ export default async function ListsPage({
                     sort: persist.sort,
                     from: persist.from,
                     to: persist.to,
+                    q: persist.q,
+            find: persist.find,
                   })}
                   className={`tab ${activeAttemptBucket === id ? "active" : ""} ${
                     id === "burned" ? "warn-tab" : ""
@@ -292,15 +372,38 @@ export default async function ListsPage({
             {title}{" "}
             <span className="muted" style={{ fontWeight: 400 }}>
               ({queue.length}
-              {queue.length !== rawQueue.length ? ` of ${rawQueue.length}` : ""})
+              {queue.length !== viewed.length
+                ? ` of ${viewed.length}`
+                : queue.length !== rawQueue.length
+                  ? ` of ${rawQueue.length}`
+                  : ""})
             </span>
           </h2>
+
+          {user.role === "admin" ? (
+            <AdminLeadSearch
+              query={searchQuery}
+              label="Search this list"
+              placeholder="Filter the open list"
+              baseParams={{
+                view: view === "attempts" ? "attempts" : undefined,
+                status: view === "status" ? activeStatus || undefined : undefined,
+                attempts: activeAttemptBucket || undefined,
+                sort: sort !== "attempts" ? sort : undefined,
+                from: fromYmd || undefined,
+                to: toYmd || undefined,
+                find: findQuery || undefined,
+              }}
+            />
+          ) : null}
 
           <ListDateControls
             baseParams={{
               view: view === "attempts" ? "attempts" : undefined,
               status: view === "status" ? activeStatus || undefined : undefined,
               attempts: activeAttemptBucket || undefined,
+              q: searchQuery || undefined,
+              find: findQuery || undefined,
             }}
             sort={sort}
             fromYmd={fromYmd}
@@ -316,7 +419,7 @@ export default async function ListsPage({
               {fromYmd || toYmd
                 ? ` · appointment filter ${fromYmd || "…"} → ${toYmd || "…"}`
                 : ""}
-              .
+              {searchQuery ? ` · this list “${searchQuery}”` : ""}.
             </p>
             <a
               className="btn secondary"
@@ -327,6 +430,7 @@ export default async function ListsPage({
                 ...(sort !== "attempts" ? { sort } : {}),
                 ...(fromYmd ? { from: fromYmd } : {}),
                 ...(toYmd ? { to: toYmd } : {}),
+                ...(searchQuery ? { q: searchQuery } : {}),
               }).toString()}`}
             >
               Download CSV
