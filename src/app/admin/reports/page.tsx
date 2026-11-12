@@ -201,6 +201,11 @@ export default function AdminReportsPage() {
             Download CSV
           </a>
         </div>
+        <p className="muted" style={{ marginBottom: 0, marginTop: "0.75rem", fontSize: "0.85rem" }}>
+          CSV includes team/agent totals plus a <strong>Call details</strong> section — one row per
+          dial (who was called, which agent, outcome, phone, sheet IDs). Filter that sheet for DNC /
+          Already did project to update the Database.
+        </p>
       </div>
 
       {error && <div className="error">{error}</div>}
