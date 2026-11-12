@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AdminLeadSearch } from "@/components/AdminLeadSearch";
 import { AppShell } from "@/components/AppShell";
 import { ListDateControls } from "@/components/ListDateControls";
 import { ATTEMPT_BUCKETS, parseAttemptBucket, bucketLabel } from "@/lib/attempts";
@@ -13,7 +14,7 @@ import {
   getQueueForStatus,
   type QueueLead,
 } from "@/lib/leads";
-import { applyQueueView, parseQueueSort, sortLabel } from "@/lib/queue-filters";
+import { applyQueueView, filterQueueBySearch, parseQueueSort, sortLabel } from "@/lib/queue-filters";
 
 function buildHref(opts: {
   status?: string;
@@ -22,6 +23,7 @@ function buildHref(opts: {
   sort?: string;
   from?: string;
   to?: string;
+  q?: string;
 }) {
   const p = new URLSearchParams();
   if (opts.view === "attempts") p.set("view", "attempts");
@@ -30,6 +32,7 @@ function buildHref(opts: {
   if (opts.sort && opts.sort !== "attempts") p.set("sort", opts.sort);
   if (opts.from) p.set("from", opts.from);
   if (opts.to) p.set("to", opts.to);
+  if (opts.q) p.set("q", opts.q);
   const q = p.toString();
   return q ? `/lists?${q}` : "/lists";
 }
@@ -92,6 +95,7 @@ export default async function ListsPage({
     sort?: string;
     from?: string;
     to?: string;
+    q?: string;
   }>;
 }) {
   const user = await getSessionUser();
@@ -106,6 +110,7 @@ export default async function ListsPage({
   const sort = parseQueueSort(sp.sort);
   const fromYmd = sp.from && /^\d{4}-\d{2}-\d{2}$/.test(sp.from) ? sp.from : "";
   const toYmd = sp.to && /^\d{4}-\d{2}-\d{2}$/.test(sp.to) ? sp.to : "";
+  const searchQuery = user.role === "admin" ? (sp.q || "").trim() : "";
 
   const activeStatus =
     view === "status" ? sp.status || statuses[0]?.name || "" : "";
@@ -133,7 +138,8 @@ export default async function ListsPage({
       : activeStatus;
   }
 
-  const queue = applyQueueView(rawQueue, { sort, fromYmd, toYmd });
+  const viewed = applyQueueView(rawQueue, { sort, fromYmd, toYmd });
+  const queue = searchQuery ? filterQueueBySearch(viewed, searchQuery) : viewed;
 
   const persist = {
     view: view === "attempts" ? "attempts" : undefined,
@@ -142,6 +148,7 @@ export default async function ListsPage({
     sort: sort !== "attempts" ? sort : undefined,
     from: fromYmd || undefined,
     to: toYmd || undefined,
+    q: searchQuery || undefined,
   };
 
   return (
@@ -162,6 +169,7 @@ export default async function ListsPage({
             sort: persist.sort,
             from: persist.from,
             to: persist.to,
+            q: persist.q,
           })}
           className={`tab ${view === "status" ? "active" : ""}`}
         >
@@ -174,6 +182,7 @@ export default async function ListsPage({
             sort: persist.sort,
             from: persist.from,
             to: persist.to,
+            q: persist.q,
           })}
           className={`tab ${view === "attempts" ? "active" : ""}`}
         >
@@ -202,6 +211,7 @@ export default async function ListsPage({
                   sort: persist.sort,
                   from: persist.from,
                   to: persist.to,
+                  q: persist.q,
                 })}
                 className={`tab ${s.name === activeStatus ? "active" : ""}`}
               >
@@ -217,6 +227,7 @@ export default async function ListsPage({
                 sort: persist.sort,
                 from: persist.from,
                 to: persist.to,
+                q: persist.q,
               })}
               className={`tab ${!activeAttemptBucket ? "active" : ""}`}
             >
@@ -236,6 +247,7 @@ export default async function ListsPage({
                     sort: persist.sort,
                     from: persist.from,
                     to: persist.to,
+                    q: persist.q,
                   })}
                   className={`tab ${activeAttemptBucket === b.id ? "active" : ""} ${
                     b.id === "burned" ? "warn-tab" : ""
@@ -270,6 +282,7 @@ export default async function ListsPage({
                     sort: persist.sort,
                     from: persist.from,
                     to: persist.to,
+                    q: persist.q,
                   })}
                   className={`tab ${activeAttemptBucket === id ? "active" : ""} ${
                     id === "burned" ? "warn-tab" : ""
@@ -289,15 +302,34 @@ export default async function ListsPage({
             {title}{" "}
             <span className="muted" style={{ fontWeight: 400 }}>
               ({queue.length}
-              {queue.length !== rawQueue.length ? ` of ${rawQueue.length}` : ""})
+              {queue.length !== viewed.length
+                ? ` of ${viewed.length}`
+                : queue.length !== rawQueue.length
+                  ? ` of ${rawQueue.length}`
+                  : ""})
             </span>
           </h2>
+
+          {user.role === "admin" ? (
+            <AdminLeadSearch
+              query={searchQuery}
+              baseParams={{
+                view: view === "attempts" ? "attempts" : undefined,
+                status: view === "status" ? activeStatus || undefined : undefined,
+                attempts: activeAttemptBucket || undefined,
+                sort: sort !== "attempts" ? sort : undefined,
+                from: fromYmd || undefined,
+                to: toYmd || undefined,
+              }}
+            />
+          ) : null}
 
           <ListDateControls
             baseParams={{
               view: view === "attempts" ? "attempts" : undefined,
               status: view === "status" ? activeStatus || undefined : undefined,
               attempts: activeAttemptBucket || undefined,
+              q: searchQuery || undefined,
             }}
             sort={sort}
             fromYmd={fromYmd}
@@ -313,7 +345,7 @@ export default async function ListsPage({
               {fromYmd || toYmd
                 ? ` · appointment filter ${fromYmd || "…"} → ${toYmd || "…"}`
                 : ""}
-              .
+              {searchQuery ? ` · search “${searchQuery}”` : ""}.
             </p>
             <a
               className="btn secondary"
@@ -324,6 +356,7 @@ export default async function ListsPage({
                 ...(sort !== "attempts" ? { sort } : {}),
                 ...(fromYmd ? { from: fromYmd } : {}),
                 ...(toYmd ? { to: toYmd } : {}),
+                ...(searchQuery ? { q: searchQuery } : {}),
               }).toString()}`}
             >
               Download CSV

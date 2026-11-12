@@ -8,7 +8,7 @@ import {
   getQueueForStatus,
 } from "@/lib/leads";
 import { queueToCsv } from "@/lib/list-export";
-import { applyQueueView, parseQueueSort } from "@/lib/queue-filters";
+import { applyQueueView, filterQueueBySearch, parseQueueSort } from "@/lib/queue-filters";
 
 export async function GET(req: Request) {
   try {
@@ -23,6 +23,7 @@ export async function GET(req: Request) {
     const to = url.searchParams.get("to");
     const fromYmd = from && /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : null;
     const toYmd = to && /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : null;
+    const searchQuery = user.role === "admin" ? (url.searchParams.get("q") || "").trim() : "";
 
     const assigned = await getAssignedStatuses(user.id, user.role);
     const attemptBuckets = await getAssignedAttemptBuckets(user.id, user.role);
@@ -57,7 +58,8 @@ export async function GET(req: Request) {
       exportView = "status";
     }
 
-    const queue = applyQueueView(raw, { sort, fromYmd, toYmd });
+    const viewed = applyQueueView(raw, { sort, fromYmd, toYmd });
+    const queue = searchQuery ? filterQueueBySearch(viewed, searchQuery) : viewed;
     const csv = queueToCsv(queue, {
       title,
       view: exportView,
@@ -66,6 +68,7 @@ export async function GET(req: Request) {
       sort,
       from: fromYmd,
       to: toYmd,
+      search: searchQuery || undefined,
     });
 
     const safe = title.replace(/[^\w.-]+/g, "_").slice(0, 60) || "list";
