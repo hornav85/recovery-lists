@@ -279,6 +279,10 @@ export async function getAssignedStatuses(userId: number, role: string) {
 /**
  * Agents may only open/log leads that appear in their assigned queues
  * (status lists and/or attempt-bucket lists) — same rules as /api/lists.
+ *
+ * Status check uses the active (newest) sheet row for the prospect — the same
+ * row Lists shows — so logging never fails with "Not assigned" when the agent
+ * can already see the lead on their status list.
  */
 export async function agentCanAccessLead(
   user: PublicUser,
@@ -290,13 +294,22 @@ export async function agentCanAccessLead(
   const lead = leads[0];
   if (!lead) return false;
 
+  const siblings = await sql<LeadDb>(
+    `SELECT * FROM leads WHERE prospect_key = $1`,
+    [lead.prospect_key],
+  );
+  siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
+  const active = siblings[0] || lead;
+
   const assignedStatuses = await getAssignedStatuses(user.id, user.role);
   const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
-  const statusMatch = statusNames.includes(normalizeStatus(lead.status));
+  // Match queue membership: active row status, or the opened row's status.
+  const statusMatch =
+    statusNames.includes(normalizeStatus(active.status)) ||
+    statusNames.includes(normalizeStatus(lead.status));
 
-  // Status assignment covers All attempts: agents can open/log anyone on that
-  // status and correct today's outcome. Attempt buckets only filter the
-  // "By attempts" queues — they must not block status-list dialing after 0→1.
+  // Status assignment covers All attempts. Attempt buckets only filter the
+  // "By attempts" view — they must not block dialing after 0→1.
   if (statusMatch) {
     return true;
   }
