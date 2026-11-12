@@ -5,6 +5,7 @@ import {
 } from "./attempts";
 import { sql, type PublicUser } from "./db";
 import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
+import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
 import { activeSortValue } from "./prospect";
 import { pacificYmd } from "./time";
 
@@ -103,7 +104,7 @@ async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
 
   for (const [, group] of byProspect) {
     group.sort((a, b) => activeSortValue(b) - activeSortValue(a));
-    const top = group[0];
+    const top = { ...group[0], phone: normalizePhone(group[0].phone) };
     const attempt = latestAttempts.get(top.prospect_key);
     if (isHiddenLead(top, attempt)) continue;
     const attempt_count = counts.get(top.prospect_key) || 0;
@@ -151,6 +152,7 @@ export async function getQueueForStatus(
   statusName: string,
   attemptBucket?: AttemptBucketId | null
 ): Promise<QueueLead[]> {
+  await ensureStoredPhonesNormalized();
   const target = normalizeStatus(statusName);
   // Filter in SQL first; normalizeStatus aliases still applied in JS.
   const candidates = await sql<LeadDb>(
@@ -171,6 +173,7 @@ export async function getQueueForStatus(
 
 /** Every visible lead, one per prospect, across all status lists. */
 export async function getAllVisibleLeads(): Promise<QueueLead[]> {
+  await ensureStoredPhonesNormalized();
   const candidates = await sql<LeadDb>(
     `SELECT * FROM leads
      WHERE is_dnc = 0
@@ -187,6 +190,7 @@ export async function getQueueForAttemptBucket(
   attemptBucket: AttemptBucketId,
   allowedStatuses?: string[] | null
 ): Promise<QueueLead[]> {
+  await ensureStoredPhonesNormalized();
   const candidates = await sql<LeadDb>(
     `SELECT * FROM leads
      WHERE is_dnc = 0
@@ -242,6 +246,7 @@ export async function getAssignedAttemptBuckets(
 }
 
 export async function getLeadDetail(leadId: number) {
+  await ensureStoredPhonesNormalized();
   const leads = await sql<LeadDb>("SELECT * FROM leads WHERE id = $1", [leadId]);
   const lead = leads[0];
   if (!lead) return null;
@@ -252,8 +257,8 @@ export async function getLeadDetail(leadId: number) {
   );
   siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
 
-  const active = siblings[0];
-  const history = siblings.slice(1);
+  const active = { ...siblings[0], phone: normalizePhone(siblings[0].phone) };
+  const history = siblings.slice(1).map((row) => ({ ...row, phone: normalizePhone(row.phone) }));
   // History anchor: older rows display-only; active is newest
 
   const attempts = await sql<AttemptRow>(

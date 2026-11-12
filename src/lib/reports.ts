@@ -1,4 +1,5 @@
 import { bucketLabel } from "./attempts";
+import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
 import { assignmentsAsOf } from "./assignments";
 import { sql } from "./db";
 import { getQueueForStatus } from "./leads";
@@ -123,6 +124,7 @@ const ATTEMPT_SELECT = `SELECT a.id, a.outcome, a.notes, a.created_at, a.agent_u
        LEFT JOIN leads l ON l.id = a.lead_id`;
 
 async function loadAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
+  await ensureStoredPhonesNormalized();
   // Cast to timestamptz so PGlite "YYYY-MM-DD HH:MM:SS+00" and ISO strings compare correctly
   if (agentId && Number.isFinite(agentId)) {
     return sql<AttemptJoin>(
@@ -155,7 +157,7 @@ function toCallDetail(a: AttemptJoin): CallDetailRow {
     notes: a.notes || "",
     prospectKey: a.prospect_key,
     leadName: a.lead_name || "",
-    phone: a.lead_phone || "",
+    phone: normalizePhone(a.lead_phone) || "",
     address: a.lead_address || "",
     project: a.lead_project || "",
     listStatus: a.lead_status || "",

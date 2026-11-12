@@ -1,4 +1,5 @@
 import type { QueueLead } from "./leads";
+import { normalizePhone } from "./phone";
 
 function esc(v: unknown): string {
   const s = v == null ? "" : String(v);
@@ -60,7 +61,7 @@ export function queueToCsv(
     lines.push(
       [
         lead.name || "",
-        lead.phone || "",
+        normalizePhone(lead.phone) || "",
         lead.status || "",
         lead.appointment_date || lead.date_col || "",
         lead.meeting_time || "",

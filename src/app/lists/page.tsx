@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { AdminLeadSearch } from "@/components/AdminLeadSearch";
 import { AppShell } from "@/components/AppShell";
 import { ListDateControls } from "@/components/ListDateControls";
+import { PhoneLink } from "@/components/PhoneLink";
 import { ATTEMPT_BUCKETS, parseAttemptBucket, bucketLabel } from "@/lib/attempts";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
@@ -77,7 +78,9 @@ function QueueTable({
             <td>
               <Link href={`/leads/${lead.id}`}>{lead.name || "—"}</Link>
             </td>
-            <td>{lead.phone || "—"}</td>
+            <td>
+              <PhoneLink phone={lead.phone} />
+            </td>
             <td>
               <span className="badge">{lead.status || "—"}</span>
             </td>

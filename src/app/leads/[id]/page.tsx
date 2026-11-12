@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { PhoneLink } from "@/components/PhoneLink";
 import { AttemptForm } from "@/components/AttemptForm";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
@@ -36,7 +37,9 @@ function LeadFields({
       <dt>Name</dt>
       <dd>{lead.name || "—"}</dd>
       <dt>Phone</dt>
-      <dd>{lead.phone || "—"}</dd>
+      <dd>
+        <PhoneLink phone={lead.phone} />
+      </dd>
       <dt>Address</dt>
       <dd>{lead.address || "—"}</dd>
       <dt>Status</dt>

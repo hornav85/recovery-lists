@@ -3,6 +3,7 @@ import { COL, rowFromCells, type LeadRow } from "./columns";
 import { sql } from "./db";
 import { FIXTURE_DATABASE_CSV, FIXTURE_DNC_CSV } from "./fixture-data";
 import { normalizeStatus } from "./statuses";
+import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
 import { prospectKey } from "./prospect";
 
 export type SyncResult = {
@@ -173,6 +174,7 @@ function objectsToLeadRows(objects: SheetObject[]): LeadRow[] {
 }
 
 async function upsertLeads(leads: LeadRow[], dncKeys: Set<string>) {
+  await ensureStoredPhonesNormalized();
   const insertSql = `
     INSERT INTO leads (
       sheet_row_index, prospect_key, prospect_id, lead_id, phone, name, address,
@@ -237,7 +239,7 @@ async function upsertLeads(leads: LeadRow[], dncKeys: Set<string>) {
       key,
       row.prospectId || null,
       row.leadId || null,
-      row.cell || null,
+      normalizePhone(row.cell),
       row.name || null,
       row.address || null,
       status,
