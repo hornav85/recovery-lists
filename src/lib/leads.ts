@@ -294,21 +294,18 @@ export async function agentCanAccessLead(
   const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
   const statusMatch = statusNames.includes(normalizeStatus(lead.status));
 
-  const buckets = await getAssignedAttemptBuckets(user.id, user.role);
-  const attemptCount = await attemptCountForProspect(lead.prospect_key);
-  const bucket = bucketForCount(attemptCount);
-  const bucketMatch = buckets.includes(bucket);
-
-  // Status-list access: status must be assigned. If the agent also has
-  // attempt-bucket assignments, the lead must fall in one of those buckets.
+  // Status assignment covers All attempts: agents can open/log anyone on that
+  // status and correct today's outcome. Attempt buckets only filter the
+  // "By attempts" queues — they must not block status-list dialing after 0→1.
   if (statusMatch) {
-    if (buckets.length === 0) return true;
-    return bucketMatch;
+    return true;
   }
 
-  // Attempt-queue-only agents (no status lists): bucket assignment is enough.
+  const buckets = await getAssignedAttemptBuckets(user.id, user.role);
   if (statusNames.length === 0 && buckets.length > 0) {
-    return bucketMatch;
+    const attemptCount = await attemptCountForProspect(lead.prospect_key);
+    const bucket = bucketForCount(attemptCount);
+    return buckets.includes(bucket);
   }
 
   return false;
