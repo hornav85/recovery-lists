@@ -533,14 +533,18 @@ async function fetchAppsScriptJson(): Promise<{
     );
   }
   const url = new URL(base);
-  // Drop any pasted ?token=…; we always attach the bound secret token
+  // Never put the token in the query string (logs / Referer leakage).
   url.search = "";
-  url.searchParams.set("token", token);
 
   const res = await fetch(url.toString(), {
-    method: "GET",
+    method: "POST",
     redirect: "follow",
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ token }),
     cache: "no-store",
   });
 
@@ -604,12 +608,22 @@ async function fetchGoogleSheets(): Promise<{
   };
 }
 
+/** Max CSV paste size (chars) for admin sync — blocks unbounded uploads. */
+export const MAX_CSV_CHARS = 2_000_000;
+
 export async function runSync(opts?: {
   csvDatabase?: string;
   csvDnc?: string;
   forceFixture?: boolean;
 }): Promise<SyncResult> {
   if (opts?.csvDatabase) {
+    const dbLen = opts.csvDatabase.length;
+    const dncLen = opts.csvDnc?.length ?? 0;
+    if (dbLen > MAX_CSV_CHARS || dncLen > MAX_CSV_CHARS) {
+      throw new Error(
+        `CSV too large (max ${MAX_CSV_CHARS} characters per file)`,
+      );
+    }
     return syncFromCsvText(opts.csvDatabase, opts.csvDnc);
   }
   if (opts?.forceFixture) {

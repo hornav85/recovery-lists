@@ -1,5 +1,10 @@
 import { NextResponse } from "next/server";
-import { checkLoginRateLimit, login, recordLoginAttempt } from "@/lib/auth";
+import {
+  checkLoginRateLimit,
+  clientIpFromRequest,
+  login,
+  recordLoginAttempt,
+} from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
 
 export async function POST(req: Request) {
@@ -11,12 +16,11 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: "Username and password required" }, { status: 400 });
   }
 
-  const ip =
-    req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ||
-    req.headers.get("x-real-ip") ||
-    "unknown";
+  const ip = clientIpFromRequest(req);
+  const userKey = `user|${username.toLowerCase().trim()}`;
   const keys = {
-    userIp: `${username.toLowerCase()}|${ip}`,
+    user: userKey,
+    userIp: `${userKey}|${ip}`,
     ip: `ip|${ip}`,
   };
   try {

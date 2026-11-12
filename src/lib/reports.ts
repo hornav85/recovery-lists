@@ -76,6 +76,8 @@ type AttemptJoin = {
   display_name: string;
 };
 
+const REPORT_ATTEMPTS_LIMIT = 50_000;
+
 async function loadAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
   // Cast to timestamptz so PGlite "YYYY-MM-DD HH:MM:SS+00" and ISO strings compare correctly
   if (agentId && Number.isFinite(agentId)) {
@@ -88,8 +90,9 @@ async function loadAttempts(range: DateRange, agentId?: number | null): Promise<
        WHERE a.created_at::timestamptz >= $1::timestamptz
          AND a.created_at::timestamptz < $2::timestamptz
          AND a.agent_user_id = $3
-       ORDER BY a.created_at ASC`,
-      [range.fromIso, range.toIsoExclusive, agentId],
+       ORDER BY a.created_at ASC
+       LIMIT $4`,
+      [range.fromIso, range.toIsoExclusive, agentId, REPORT_ATTEMPTS_LIMIT],
     );
   }
   return sql<AttemptJoin>(
@@ -100,8 +103,9 @@ async function loadAttempts(range: DateRange, agentId?: number | null): Promise<
      LEFT JOIN leads l ON l.id = a.lead_id
      WHERE a.created_at::timestamptz >= $1::timestamptz
        AND a.created_at::timestamptz < $2::timestamptz
-     ORDER BY a.created_at ASC`,
-    [range.fromIso, range.toIsoExclusive],
+     ORDER BY a.created_at ASC
+     LIMIT $3`,
+    [range.fromIso, range.toIsoExclusive, REPORT_ATTEMPTS_LIMIT],
   );
 }
 

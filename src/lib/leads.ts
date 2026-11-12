@@ -119,15 +119,25 @@ export function isHiddenLead(
   return false;
 }
 
+/** Cap row scans so public queue/report paths cannot pull unbounded tables. */
+const LEADS_SCAN_LIMIT = 8000;
+
 /** Active lead rows for a status list, one per prospect (newest). */
 export async function getQueueForStatus(
   statusName: string,
   attemptBucket?: AttemptBucketId | null
 ): Promise<QueueLead[]> {
   const target = normalizeStatus(statusName);
-  const all = (await sql<LeadDb>(`SELECT * FROM leads`)).filter(
-    (lead) => normalizeStatus(lead.status) === target
+  // Filter in SQL first; normalizeStatus aliases still applied in JS.
+  const candidates = await sql<LeadDb>(
+    `SELECT * FROM leads
+     WHERE is_dnc = 0
+       AND (status IS NULL OR UPPER(status) <> 'DNC')
+     ORDER BY id DESC
+     LIMIT $1`,
+    [LEADS_SCAN_LIMIT],
   );
+  const all = candidates.filter((lead) => normalizeStatus(lead.status) === target);
   let queue = await buildActiveQueue(all);
   if (attemptBucket) {
     queue = queue.filter((l) => countInBucket(l.attempt_count, attemptBucket));
@@ -140,7 +150,15 @@ export async function getQueueForAttemptBucket(
   attemptBucket: AttemptBucketId,
   allowedStatuses?: string[] | null
 ): Promise<QueueLead[]> {
-  let all = await sql<LeadDb>(`SELECT * FROM leads`);
+  const candidates = await sql<LeadDb>(
+    `SELECT * FROM leads
+     WHERE is_dnc = 0
+       AND (status IS NULL OR UPPER(status) <> 'DNC')
+     ORDER BY id DESC
+     LIMIT $1`,
+    [LEADS_SCAN_LIMIT],
+  );
+  let all = candidates;
   if (allowedStatuses && allowedStatuses.length > 0) {
     const allowed = new Set(allowedStatuses.map((s) => normalizeStatus(s)));
     all = all.filter((lead) => allowed.has(normalizeStatus(lead.status)));
