@@ -280,9 +280,14 @@ export async function getAssignedStatuses(userId: number, role: string) {
  * Agents may only open/log leads that appear in their assigned queues
  * (status lists and/or attempt-bucket lists) — same rules as /api/lists.
  *
- * Status check uses the active (newest) sheet row for the prospect — the same
- * row Lists shows — so logging never fails with "Not assigned" when the agent
- * can already see the lead on their status list.
+ * A status list filters sheet rows first, then keeps the newest row in that
+ * subset. Disposition posts the global active row, which can be a newer
+ * sibling with a different Column W status. Grant access when any sibling
+ * of the same prospect — or the opened row — has an assigned status, so
+ * logging does not 403 after the agent already sees the prospect.
+ *
+ * Status assignment covers All attempts. Attempt buckets apply only when the
+ * agent has no status lists; they must not AND-gate dialing after 0→1.
  */
 export async function agentCanAccessLead(
   user: PublicUser,
@@ -298,14 +303,11 @@ export async function agentCanAccessLead(
     `SELECT * FROM leads WHERE prospect_key = $1`,
     [lead.prospect_key],
   );
-  siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
-  const active = siblings[0] || lead;
 
   const assignedStatuses = await getAssignedStatuses(user.id, user.role);
   const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
-  // Match queue membership: active row status, or the opened row's status.
   const statusMatch =
-    statusNames.includes(normalizeStatus(active.status)) ||
+    siblings.some((row) => statusNames.includes(normalizeStatus(row.status))) ||
     statusNames.includes(normalizeStatus(lead.status));
 
   // Status assignment covers All attempts. Attempt buckets only filter the
