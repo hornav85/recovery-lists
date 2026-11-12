@@ -169,6 +169,19 @@ export async function getQueueForStatus(
   return queue;
 }
 
+/** Every visible lead, one per prospect, across all status lists. */
+export async function getAllVisibleLeads(): Promise<QueueLead[]> {
+  const candidates = await sql<LeadDb>(
+    `SELECT * FROM leads
+     WHERE is_dnc = 0
+       AND (status IS NULL OR UPPER(status) <> 'DNC')
+     ORDER BY id DESC
+     LIMIT $1`,
+    [LEADS_SCAN_LIMIT],
+  );
+  return buildActiveQueue(candidates);
+}
+
 /** Cross-status queue for an attempt bucket (e.g. burned out / 1 attempt). */
 export async function getQueueForAttemptBucket(
   attemptBucket: AttemptBucketId,

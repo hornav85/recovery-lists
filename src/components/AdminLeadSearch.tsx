@@ -6,9 +6,15 @@ import { useRouter } from "next/navigation";
 export function AdminLeadSearch({
   query,
   baseParams,
+  paramName = "q",
+  label = "Search leads",
+  placeholder = "Name, phone, address, status, project…",
 }: {
   query: string;
   baseParams: Record<string, string | undefined>;
+  paramName?: string;
+  label?: string;
+  placeholder?: string;
 }) {
   const router = useRouter();
   const [value, setValue] = useState(query);
@@ -19,7 +25,7 @@ export function AdminLeadSearch({
 
   function hrefWith(q: string | undefined) {
     const p = new URLSearchParams();
-    for (const [k, v] of Object.entries({ ...baseParams, q })) {
+    for (const [k, v] of Object.entries({ ...baseParams, [paramName]: q })) {
       if (v) p.set(k, v);
     }
     const s = p.toString();
@@ -44,15 +50,15 @@ export function AdminLeadSearch({
       onSubmit={apply}
     >
       <label className="field" style={{ flex: "1 1 18rem" }}>
-        Search leads
+        {label}
         <input
           type="text"
-          name="q"
+          name={paramName}
           value={value}
           onChange={(e) => setValue(e.target.value)}
-          placeholder="Name, phone, address, status, project…"
+          placeholder={placeholder}
           autoComplete="off"
-          aria-label="Search leads"
+          aria-label={label}
         />
       </label>
       <button className="btn" type="submit">
