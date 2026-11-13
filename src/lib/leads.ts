@@ -147,15 +147,9 @@ export function isHiddenLead(
 /** Cap row scans so public queue/report paths cannot pull unbounded tables. */
 const LEADS_SCAN_LIMIT = 8000;
 
-/** Active lead rows for a status list, one per prospect (newest). */
-export async function getQueueForStatus(
-  statusName: string,
-  attemptBucket?: AttemptBucketId | null
-): Promise<QueueLead[]> {
+async function loadNonDncLeads(): Promise<LeadDb[]> {
   await ensureStoredPhonesNormalized();
-  const target = normalizeStatus(statusName);
-  // Filter in SQL first; normalizeStatus aliases still applied in JS.
-  const candidates = await sql<LeadDb>(
+  return sql<LeadDb>(
     `SELECT * FROM leads
      WHERE is_dnc = 0
        AND (status IS NULL OR UPPER(status) <> 'DNC')
@@ -163,8 +157,26 @@ export async function getQueueForStatus(
      LIMIT $1`,
     [LEADS_SCAN_LIMIT],
   );
-  const all = candidates.filter((lead) => normalizeStatus(lead.status) === target);
-  let queue = await buildActiveQueue(all);
+}
+
+/**
+ * One row per prospect: the meeting with the latest appointment date (else DATE).
+ * List membership uses that row's status only — an older Cancelled meeting does
+ * not keep the prospect on Cancelled after a later Sold meeting.
+ */
+async function latestMeetingQueue(): Promise<QueueLead[]> {
+  return buildActiveQueue(await loadNonDncLeads());
+}
+
+/** Active lead rows for a status list, one per prospect (newest meeting). */
+export async function getQueueForStatus(
+  statusName: string,
+  attemptBucket?: AttemptBucketId | null
+): Promise<QueueLead[]> {
+  const target = normalizeStatus(statusName);
+  let queue = (await latestMeetingQueue()).filter(
+    (lead) => normalizeStatus(lead.status) === target,
+  );
   if (attemptBucket) {
     queue = queue.filter((l) => countInBucket(l.attempt_count, attemptBucket));
   }
@@ -173,16 +185,7 @@ export async function getQueueForStatus(
 
 /** Every visible lead, one per prospect, across all status lists. */
 export async function getAllVisibleLeads(): Promise<QueueLead[]> {
-  await ensureStoredPhonesNormalized();
-  const candidates = await sql<LeadDb>(
-    `SELECT * FROM leads
-     WHERE is_dnc = 0
-       AND (status IS NULL OR UPPER(status) <> 'DNC')
-     ORDER BY id DESC
-     LIMIT $1`,
-    [LEADS_SCAN_LIMIT],
-  );
-  return buildActiveQueue(candidates);
+  return latestMeetingQueue();
 }
 
 /** Cross-status queue for an attempt bucket (e.g. burned out / 1 attempt). */
@@ -190,23 +193,12 @@ export async function getQueueForAttemptBucket(
   attemptBucket: AttemptBucketId,
   allowedStatuses?: string[] | null
 ): Promise<QueueLead[]> {
-  await ensureStoredPhonesNormalized();
-  const candidates = await sql<LeadDb>(
-    `SELECT * FROM leads
-     WHERE is_dnc = 0
-       AND (status IS NULL OR UPPER(status) <> 'DNC')
-     ORDER BY id DESC
-     LIMIT $1`,
-    [LEADS_SCAN_LIMIT],
-  );
-  let all = candidates;
+  let queue = await latestMeetingQueue();
   if (allowedStatuses && allowedStatuses.length > 0) {
     const allowed = new Set(allowedStatuses.map((s) => normalizeStatus(s)));
-    all = all.filter((lead) => allowed.has(normalizeStatus(lead.status)));
+    queue = queue.filter((lead) => allowed.has(normalizeStatus(lead.status)));
   }
-  return (await buildActiveQueue(all)).filter((l) =>
-    countInBucket(l.attempt_count, attemptBucket)
-  );
+  return queue.filter((l) => countInBucket(l.attempt_count, attemptBucket));
 }
 
 export function countByAttemptBucket(
@@ -298,11 +290,9 @@ export async function getAssignedStatuses(userId: number, role: string) {
  * Agents may only open/log leads that appear in their assigned queues
  * (status lists and/or attempt-bucket lists) — same rules as /api/lists.
  *
- * A status list filters sheet rows first, then keeps the newest row in that
- * subset. Disposition posts the global active row, which can be a newer
- * sibling with a different Column W status. Grant access when any sibling
- * of the same prospect — or the opened row — has an assigned status, so
- * logging does not 403 after the agent already sees the prospect.
+ * List membership is the newest meeting by appointment date. Access follows
+ * that same row's status, so an older Cancelled row cannot keep a later Sold
+ * prospect on the Cancelled list or let a Cancelled-only agent log it.
  *
  * Status assignment covers All attempts. Attempt buckets apply only when the
  * agent has no status lists; they must not AND-gate dialing after 0→1.
@@ -321,12 +311,12 @@ export async function agentCanAccessLead(
     `SELECT * FROM leads WHERE prospect_key = $1`,
     [lead.prospect_key],
   );
+  siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
+  const active = siblings[0] || lead;
 
   const assignedStatuses = await getAssignedStatuses(user.id, user.role);
   const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
-  const statusMatch =
-    siblings.some((row) => statusNames.includes(normalizeStatus(row.status))) ||
-    statusNames.includes(normalizeStatus(lead.status));
+  const statusMatch = statusNames.includes(normalizeStatus(active.status));
 
   // Status assignment covers All attempts. Attempt buckets only filter the
   // "By attempts" view — they must not block dialing after 0→1.
