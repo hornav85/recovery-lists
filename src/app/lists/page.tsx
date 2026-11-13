@@ -219,7 +219,8 @@ export default async function ListsPage({
         </>
       ) : null}
       <p className="muted">
-        Status lists and attempt filters. Sort by appointment date or fewest attempts.{" "}
+        Status lists use each prospect&apos;s <strong>latest appointment</strong> only. An older
+        Cancelled meeting drops off Cancelled once a later meeting is Sold (or any other status).{" "}
         <strong>All attempts</strong> keeps dialed leads visible through the end of the Pacific day
         (including Recovered/DNC); they drop off the next day. Sheet DNC hides immediately.{" "}
         <strong>0 attempts</strong> moves a lead after a real dial. Same-day outcome edits replace
