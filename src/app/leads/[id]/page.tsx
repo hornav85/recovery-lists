@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { redirect, notFound } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
+import { PhoneLink } from "@/components/PhoneLink";
 import { AttemptForm } from "@/components/AttemptForm";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
@@ -37,7 +38,9 @@ function LeadFields({
       <dt>Name</dt>
       <dd>{lead.name || "—"}</dd>
       <dt>Phone</dt>
-      <dd>{lead.phone || "—"}</dd>
+      <dd>
+        <PhoneLink phone={lead.phone} />
+      </dd>
       <dt>Address</dt>
       <dd>{lead.address || "—"}</dd>
       <dt>Status</dt>
@@ -158,6 +161,8 @@ export default async function LeadPage({
     sort?: string;
     from?: string;
     to?: string;
+    q?: string;
+    find?: string;
   }>;
 }) {
   const user = await getSessionUser();
@@ -173,6 +178,8 @@ export default async function LeadPage({
     sort: sp.sort,
     from: sp.from,
     to: sp.to,
+    q: sp.q,
+    find: sp.find,
   });
   const here = new URLSearchParams();
   const q = backHref.split("?")[1];
@@ -202,7 +209,8 @@ export default async function LeadPage({
 
       {hidden && (
         <div className="error" style={{ marginBottom: "1rem" }}>
-          This prospect is hidden from queues (Recovered or DNC from a previous day, or sheet DNC).
+          This prospect is hidden from queues (sheet DNC, or Recovered/DNC from a prior day).
+          Same-day Recovered/DNC stay on All attempts until the Pacific day ends.
         </div>
       )}
 

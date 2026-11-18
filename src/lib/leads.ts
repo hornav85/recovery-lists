@@ -4,8 +4,10 @@ import {
   countInBucket,
 } from "./attempts";
 import { sql, type PublicUser } from "./db";
-import { normalizeStatus, outcomeHiddenNow } from "./statuses";
+import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
+import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
 import { activeSortValue } from "./prospect";
+import { pacificYmd } from "./time";
 
 export type LeadDb = {
   id: number;
@@ -67,11 +69,25 @@ async function latestAttemptByProspect(): Promise<Map<string, AttemptRow>> {
   return new Map(rows.map((r) => [r.prospect_key, r]));
 }
 
+/** One dial day (Pacific) counts as one attempt — same-day edits don't inflate the count. */
 async function attemptCountsByProspect(): Promise<Map<string, number>> {
   const rows = await sql<{ prospect_key: string; c: string | number }>(
-    `SELECT prospect_key, COUNT(*) AS c FROM call_attempts GROUP BY prospect_key`,
+    `SELECT prospect_key,
+            COUNT(DISTINCT (created_at::timestamptz AT TIME ZONE 'America/Los_Angeles')::date) AS c
+     FROM call_attempts
+     GROUP BY prospect_key`,
   );
   return new Map(rows.map((r) => [r.prospect_key, Number(r.c)]));
+}
+
+export async function attemptCountForProspect(prospectKey: string): Promise<number> {
+  const rows = await sql<{ c: string | number }>(
+    `SELECT COUNT(DISTINCT (created_at::timestamptz AT TIME ZONE 'America/Los_Angeles')::date) AS c
+     FROM call_attempts
+     WHERE prospect_key = $1`,
+    [prospectKey],
+  );
+  return Number(rows[0]?.c || 0);
 }
 
 async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
@@ -88,7 +104,7 @@ async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
 
   for (const [, group] of byProspect) {
     group.sort((a, b) => activeSortValue(b) - activeSortValue(a));
-    const top = group[0];
+    const top = { ...group[0], phone: normalizePhone(group[0].phone) };
     const attempt = latestAttempts.get(top.prospect_key);
     if (isHiddenLead(top, attempt)) continue;
     const attempt_count = counts.get(top.prospect_key) || 0;
@@ -108,36 +124,68 @@ async function buildActiveQueue(leads: LeadDb[]): Promise<QueueLead[]> {
   return active;
 }
 
-/** True if lead should be hidden from queues. */
+/**
+ * True if lead should be hidden from queues.
+ * Recovered / DNC attempt outcomes stay visible through the Pacific calendar day
+ * they were logged, then drop off the next day. Sheet DNC still hides immediately.
+ */
 export function isHiddenLead(
   lead: LeadDb,
-  latestAttempt: AttemptRow | undefined
+  latestAttempt: AttemptRow | undefined,
+  todayYmd: string = pacificYmd(),
 ): boolean {
   if (lead.is_dnc) return true;
   if ((lead.status || "").toUpperCase() === "DNC") return true;
-  if (
-    latestAttempt &&
-    outcomeHiddenNow(latestAttempt.outcome, latestAttempt.created_at)
-  ) {
-    return true;
+  if (latestAttempt && HIDDEN_OUTCOMES.has(latestAttempt.outcome)) {
+    const attemptDay = pacificYmd(new Date(latestAttempt.created_at));
+    if (attemptDay < todayYmd) return true;
+    return false;
   }
   return false;
 }
 
-/** Active lead rows for a status list, one per prospect (newest). */
+/** Cap row scans so public queue/report paths cannot pull unbounded tables. */
+const LEADS_SCAN_LIMIT = 8000;
+
+async function loadNonDncLeads(): Promise<LeadDb[]> {
+  await ensureStoredPhonesNormalized();
+  return sql<LeadDb>(
+    `SELECT * FROM leads
+     WHERE is_dnc = 0
+       AND (status IS NULL OR UPPER(status) <> 'DNC')
+     ORDER BY id DESC
+     LIMIT $1`,
+    [LEADS_SCAN_LIMIT],
+  );
+}
+
+/**
+ * One row per prospect: the meeting with the latest appointment date (else DATE).
+ * List membership uses that row's status only — an older Cancelled meeting does
+ * not keep the prospect on Cancelled after a later Sold meeting.
+ */
+async function latestMeetingQueue(): Promise<QueueLead[]> {
+  return buildActiveQueue(await loadNonDncLeads());
+}
+
+/** Active lead rows for a status list, one per prospect (newest meeting). */
 export async function getQueueForStatus(
   statusName: string,
   attemptBucket?: AttemptBucketId | null
 ): Promise<QueueLead[]> {
   const target = normalizeStatus(statusName);
-  const all = (await sql<LeadDb>(`SELECT * FROM leads`)).filter(
-    (lead) => normalizeStatus(lead.status) === target
+  let queue = (await latestMeetingQueue()).filter(
+    (lead) => normalizeStatus(lead.status) === target,
   );
-  let queue = await buildActiveQueue(all);
   if (attemptBucket) {
     queue = queue.filter((l) => countInBucket(l.attempt_count, attemptBucket));
   }
   return queue;
+}
+
+/** Every visible lead, one per prospect, across all status lists. */
+export async function getAllVisibleLeads(): Promise<QueueLead[]> {
+  return latestMeetingQueue();
 }
 
 /** Cross-status queue for an attempt bucket (e.g. burned out / 1 attempt). */
@@ -145,14 +193,12 @@ export async function getQueueForAttemptBucket(
   attemptBucket: AttemptBucketId,
   allowedStatuses?: string[] | null
 ): Promise<QueueLead[]> {
-  let all = await sql<LeadDb>(`SELECT * FROM leads`);
+  let queue = await latestMeetingQueue();
   if (allowedStatuses && allowedStatuses.length > 0) {
     const allowed = new Set(allowedStatuses.map((s) => normalizeStatus(s)));
-    all = all.filter((lead) => allowed.has(normalizeStatus(lead.status)));
+    queue = queue.filter((lead) => allowed.has(normalizeStatus(lead.status)));
   }
-  return (await buildActiveQueue(all)).filter((l) =>
-    countInBucket(l.attempt_count, attemptBucket)
-  );
+  return queue.filter((l) => countInBucket(l.attempt_count, attemptBucket));
 }
 
 export function countByAttemptBucket(
@@ -192,6 +238,7 @@ export async function getAssignedAttemptBuckets(
 }
 
 export async function getLeadDetail(leadId: number) {
+  await ensureStoredPhonesNormalized();
   const leads = await sql<LeadDb>("SELECT * FROM leads WHERE id = $1", [leadId]);
   const lead = leads[0];
   if (!lead) return null;
@@ -202,8 +249,8 @@ export async function getLeadDetail(leadId: number) {
   );
   siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
 
-  const active = siblings[0];
-  const history = siblings.slice(1);
+  const active = { ...siblings[0], phone: normalizePhone(siblings[0].phone) };
+  const history = siblings.slice(1).map((row) => ({ ...row, phone: normalizePhone(row.phone) }));
   // History anchor: older rows display-only; active is newest
 
   const attempts = await sql<AttemptRow>(
@@ -240,8 +287,15 @@ export async function getAssignedStatuses(userId: number, role: string) {
 }
 
 /**
- * Agents may only open/log leads that appear in their assigned status lists
- * or assigned attempt-bucket queues (same rules as /api/lists).
+ * Agents may only open/log leads that appear in their assigned queues
+ * (status lists and/or attempt-bucket lists) — same rules as /api/lists.
+ *
+ * List membership is the newest meeting by appointment date. Access follows
+ * that same row's status, so an older Cancelled row cannot keep a later Sold
+ * prospect on the Cancelled list or let a Cancelled-only agent log it.
+ *
+ * Status assignment covers All attempts. Attempt buckets apply only when the
+ * agent has no status lists; they must not AND-gate dialing after 0→1.
  */
 export async function agentCanAccessLead(
   user: PublicUser,
@@ -253,20 +307,29 @@ export async function agentCanAccessLead(
   const lead = leads[0];
   if (!lead) return false;
 
+  const siblings = await sql<LeadDb>(
+    `SELECT * FROM leads WHERE prospect_key = $1`,
+    [lead.prospect_key],
+  );
+  siblings.sort((a, b) => activeSortValue(b) - activeSortValue(a));
+  const active = siblings[0] || lead;
+
   const assignedStatuses = await getAssignedStatuses(user.id, user.role);
   const statusNames = assignedStatuses.map((s) => normalizeStatus(s.name));
-  const statusMatch = statusNames.includes(normalizeStatus(lead.status));
-  if (statusMatch) return true;
+  const statusMatch = statusNames.includes(normalizeStatus(active.status));
+
+  // Status assignment covers All attempts. Attempt buckets only filter the
+  // "By attempts" view — they must not block dialing after 0→1.
+  if (statusMatch) {
+    return true;
+  }
 
   const buckets = await getAssignedAttemptBuckets(user.id, user.role);
-  if (buckets.length === 0) return false;
+  if (statusNames.length === 0 && buckets.length > 0) {
+    const attemptCount = await attemptCountForProspect(lead.prospect_key);
+    const bucket = bucketForCount(attemptCount);
+    return buckets.includes(bucket);
+  }
 
-  const counts = await attemptCountsByProspect();
-  const attemptCount = counts.get(lead.prospect_key) || 0;
-  const bucket = bucketForCount(attemptCount);
-  if (!buckets.includes(bucket)) return false;
-
-  // Attempt queues for agents with status assignments are status-filtered.
-  if (statusNames.length === 0) return true;
-  return statusMatch;
+  return false;
 }

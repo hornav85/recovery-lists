@@ -64,10 +64,6 @@ async function seedIfEmpty() {
   }
 }
 
-export async function countUsers(): Promise<number> {
-  return countOf(await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM users"));
-}
-
 /** Rename/insert list tabs to match Column W spellings; re-normalize lead.status. */
 async function alignStatusesWithColumnW() {
   for (const name of SEED_STATUSES) {
@@ -173,8 +169,10 @@ export async function ensureReady() {
     await sql("SELECT 1");
     await seedIfEmpty();
     await alignStatusesWithColumnW();
-    const { bootstrapAssignmentSnapshots } = await import("./assignments");
-    await bootstrapAssignmentSnapshots();
+    const { ensureStoredPhonesNormalized } = await import("./phone");
+    await ensureStoredPhonesNormalized();
+    const { ensureAssignmentSnapshots } = await import("./assignments");
+    await ensureAssignmentSnapshots();
   })().catch((error: unknown) => {
     ready = undefined;
     throw error;
@@ -182,9 +180,20 @@ export async function ensureReady() {
   await ready;
 }
 
-/** Call after ensureReady so fixture CSV loads without circular imports. */
+function isHostedOrProductionRuntime(): boolean {
+  return (
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.CURSOR_APP_ID?.trim()) ||
+    Boolean(process.env.VERCEL)
+  );
+}
+
+/**
+ * Local/dev only: seed sample leads when the table is empty.
+ * Never on hosted/production — no sample rows and no file-based fixtures.
+ */
 export async function ensureFixtureLeads() {
-  if (isProductionBuild()) return;
+  if (isProductionBuild() || isHostedOrProductionRuntime()) return;
   await ensureReady();
   const leadCount = countOf(await sql<{ c: string | number }>("SELECT COUNT(*) AS c FROM leads"));
   if (leadCount === 0) {

@@ -1,4 +1,5 @@
 import { bucketLabel } from "./attempts";
+import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
 import { assignmentsAsOf } from "./assignments";
 import { sql } from "./db";
 import { getQueueForStatus } from "./leads";
@@ -69,70 +70,173 @@ function hoursBetween(aIso: string, bIso: string): number {
 type AttemptJoin = {
   id: number;
   outcome: string;
+  notes: string | null;
   created_at: string;
   agent_user_id: number;
   agent_display_name: string;
   prospect_key: string;
   lead_status: string | null;
+  lead_name: string | null;
+  lead_phone: string | null;
+  lead_address: string | null;
+  lead_project: string | null;
+  lead_prospect_id: string | null;
+  lead_sheet_lead_id: string | null;
+  lead_sheet_row_index: number | null;
+  lead_is_dnc: number | null;
   username: string;
   display_name: string;
 };
 
+export type CallDetailRow = {
+  attemptId: number;
+  dialedAt: string;
+  agentDisplayName: string;
+  agentUsername: string;
+  outcome: string;
+  notes: string;
+  prospectKey: string;
+  leadName: string;
+  phone: string;
+  address: string;
+  project: string;
+  listStatus: string;
+  prospectId: string;
+  sheetLeadId: string;
+  sheetRowIndex: string;
+  leadMarkedDnc: string;
+};
+
+const REPORT_ATTEMPTS_LIMIT = 50_000;
+
+const ATTEMPT_SELECT = `SELECT a.id, a.outcome, a.notes, a.created_at, a.agent_user_id, a.agent_display_name,
+              a.prospect_key,
+              l.status AS lead_status,
+              l.name AS lead_name,
+              l.phone AS lead_phone,
+              l.address AS lead_address,
+              l.project AS lead_project,
+              l.prospect_id AS lead_prospect_id,
+              l.lead_id AS lead_sheet_lead_id,
+              l.sheet_row_index AS lead_sheet_row_index,
+              l.is_dnc AS lead_is_dnc,
+              u.username, u.display_name
+       FROM call_attempts a
+       JOIN users u ON u.id = a.agent_user_id
+       LEFT JOIN leads l ON l.id = a.lead_id`;
+
 async function loadAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
+  await ensureStoredPhonesNormalized();
   // Cast to timestamptz so PGlite "YYYY-MM-DD HH:MM:SS+00" and ISO strings compare correctly
   if (agentId && Number.isFinite(agentId)) {
     return sql<AttemptJoin>(
-      `SELECT a.id, a.outcome, a.created_at, a.agent_user_id, a.agent_display_name,
-              a.prospect_key, l.status AS lead_status, u.username, u.display_name
-       FROM call_attempts a
-       JOIN users u ON u.id = a.agent_user_id
-       LEFT JOIN leads l ON l.id = a.lead_id
+      `${ATTEMPT_SELECT}
        WHERE a.created_at::timestamptz >= $1::timestamptz
          AND a.created_at::timestamptz < $2::timestamptz
          AND a.agent_user_id = $3
-       ORDER BY a.created_at ASC`,
-      [range.fromIso, range.toIsoExclusive, agentId],
+       ORDER BY a.created_at ASC
+       LIMIT $4`,
+      [range.fromIso, range.toIsoExclusive, agentId, REPORT_ATTEMPTS_LIMIT],
     );
   }
   return sql<AttemptJoin>(
-    `SELECT a.id, a.outcome, a.created_at, a.agent_user_id, a.agent_display_name,
-            a.prospect_key, l.status AS lead_status, u.username, u.display_name
-     FROM call_attempts a
-     JOIN users u ON u.id = a.agent_user_id
-     LEFT JOIN leads l ON l.id = a.lead_id
+    `${ATTEMPT_SELECT}
      WHERE a.created_at::timestamptz >= $1::timestamptz
        AND a.created_at::timestamptz < $2::timestamptz
-     ORDER BY a.created_at ASC`,
-    [range.fromIso, range.toIsoExclusive],
+     ORDER BY a.created_at ASC
+     LIMIT $3`,
+    [range.fromIso, range.toIsoExclusive, REPORT_ATTEMPTS_LIMIT],
   );
 }
 
-async function loadManualAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
-  if (agentId && Number.isFinite(agentId)) {
-    return sql<AttemptJoin>(
-      `SELECT a.id, a.outcome, a.created_at, a.agent_user_id, a.agent_display_name,
+const MANUAL_ATTEMPT_SELECT = `SELECT a.id, a.outcome, a.notes, a.created_at, a.agent_user_id, a.agent_display_name,
               ('manual:' || COALESCE(a.list_id::text, a.list_name) || ':' || a.prospect_key) AS prospect_key,
-              a.list_name AS lead_status, u.username, u.display_name
+              a.list_name AS lead_status,
+              r.name AS lead_name,
+              r.phone AS lead_phone,
+              r.fields_json AS fields_json,
+              u.username, u.display_name
        FROM manual_attempts a
        JOIN users u ON u.id = a.agent_user_id
-       WHERE a.created_at::timestamptz >= $1::timestamptz
-         AND a.created_at::timestamptz < $2::timestamptz
-         AND a.agent_user_id = $3
-       ORDER BY a.created_at ASC`,
-      [range.fromIso, range.toIsoExclusive, agentId],
-    );
+       LEFT JOIN manual_list_rows r ON r.id = a.row_id`;
+
+function fieldValue(fieldsJson: string | null | undefined, aliases: string[]): string {
+  if (!fieldsJson) return "";
+  try {
+    const fields = JSON.parse(fieldsJson) as Record<string, unknown>;
+    const wanted = new Set(aliases);
+    for (const [key, value] of Object.entries(fields)) {
+      const norm = key.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (wanted.has(norm) && value != null && String(value).trim()) return String(value).trim();
+    }
+  } catch {
+    return "";
   }
-  return sql<AttemptJoin>(
-    `SELECT a.id, a.outcome, a.created_at, a.agent_user_id, a.agent_display_name,
-            ('manual:' || COALESCE(a.list_id::text, a.list_name) || ':' || a.prospect_key) AS prospect_key,
-            a.list_name AS lead_status, u.username, u.display_name
-     FROM manual_attempts a
-     JOIN users u ON u.id = a.agent_user_id
-     WHERE a.created_at::timestamptz >= $1::timestamptz
-       AND a.created_at::timestamptz < $2::timestamptz
-     ORDER BY a.created_at ASC`,
-    [range.fromIso, range.toIsoExclusive],
-  );
+  return "";
+}
+
+async function loadManualAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
+  type Row = AttemptJoin & { fields_json?: string | null };
+  const rows =
+    agentId && Number.isFinite(agentId)
+      ? await sql<Row>(
+          `${MANUAL_ATTEMPT_SELECT}
+           WHERE a.created_at::timestamptz >= $1::timestamptz
+             AND a.created_at::timestamptz < $2::timestamptz
+             AND a.agent_user_id = $3
+           ORDER BY a.created_at ASC
+           LIMIT $4`,
+          [range.fromIso, range.toIsoExclusive, agentId, REPORT_ATTEMPTS_LIMIT],
+        )
+      : await sql<Row>(
+          `${MANUAL_ATTEMPT_SELECT}
+           WHERE a.created_at::timestamptz >= $1::timestamptz
+             AND a.created_at::timestamptz < $2::timestamptz
+           ORDER BY a.created_at ASC
+           LIMIT $3`,
+          [range.fromIso, range.toIsoExclusive, REPORT_ATTEMPTS_LIMIT],
+        );
+  return rows.map((row) => ({
+    id: row.id,
+    outcome: row.outcome,
+    notes: row.notes,
+    created_at: row.created_at,
+    agent_user_id: row.agent_user_id,
+    agent_display_name: row.agent_display_name,
+    prospect_key: row.prospect_key,
+    lead_status: row.lead_status,
+    lead_name: row.lead_name,
+    lead_phone: row.lead_phone,
+    lead_address: fieldValue(row.fields_json, ["address", "street", "street address"]),
+    lead_project: fieldValue(row.fields_json, ["project"]),
+    lead_prospect_id: null,
+    lead_sheet_lead_id: null,
+    lead_sheet_row_index: null,
+    lead_is_dnc: 0,
+    username: row.username,
+    display_name: row.display_name,
+  }));
+}
+
+function toCallDetail(a: AttemptJoin): CallDetailRow {
+  return {
+    attemptId: a.id,
+    dialedAt: a.created_at,
+    agentDisplayName: a.display_name || a.agent_display_name,
+    agentUsername: a.username,
+    outcome: a.outcome,
+    notes: a.notes || "",
+    prospectKey: a.prospect_key,
+    leadName: a.lead_name || "",
+    phone: normalizePhone(a.lead_phone) || "",
+    address: a.lead_address || "",
+    project: a.lead_project || "",
+    listStatus: a.lead_status || "",
+    prospectId: a.lead_prospect_id || "",
+    sheetLeadId: a.lead_sheet_lead_id || "",
+    sheetRowIndex: a.lead_sheet_row_index == null ? "" : String(a.lead_sheet_row_index),
+    leadMarkedDnc: a.lead_is_dnc ? "yes" : "no",
+  };
 }
 
 export async function buildReports(range: DateRange, agentId?: number | null) {
@@ -297,6 +401,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
 
   const teamDials = attempts.length;
   const teamRecovered = teamOutcomes.Recovered || 0;
+  const callDetails = attempts.map(toCallDetail);
 
   return {
     timezone: REPORT_TZ,
@@ -315,6 +420,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
     dayHistory,
     leaderboard,
     queueLeftover: leftover,
+    callDetails,
   };
 }
 
@@ -383,6 +489,53 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
   lines.push(["Day", "Dials", "Recovered"].join(","));
   for (const d of data.dayHistory) {
     lines.push([d.day, d.dials, d.recovered].map(esc).join(","));
+  }
+
+  lines.push("");
+  lines.push("Call details (one row per dial)");
+  lines.push(
+    [
+      "Dialed at",
+      "Agent",
+      "Username",
+      "Outcome",
+      "Notes",
+      "Client name",
+      "Phone",
+      "Address",
+      "Project",
+      "List status",
+      "Prospect key",
+      "Prospect ID",
+      "Lead ID",
+      "Sheet row",
+      "Lead marked DNC",
+      "Attempt ID",
+    ].join(","),
+  );
+  for (const c of data.callDetails) {
+    lines.push(
+      [
+        c.dialedAt,
+        c.agentDisplayName,
+        c.agentUsername,
+        c.outcome,
+        c.notes,
+        c.leadName,
+        c.phone,
+        c.address,
+        c.project,
+        c.listStatus,
+        c.prospectKey,
+        c.prospectId,
+        c.sheetLeadId,
+        c.sheetRowIndex,
+        c.leadMarkedDnc,
+        c.attemptId,
+      ]
+        .map(esc)
+        .join(","),
+    );
   }
 
   return lines.join("\n");

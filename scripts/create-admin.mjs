@@ -73,7 +73,7 @@ async function createAdmin(client) {
     const count = await client.query("SELECT COUNT(*) AS c FROM users");
     const userCount = Number(count.rows[0]?.c ?? 0);
     if (userCount > 0) {
-      throw new Error("Users already exist — refusing to bootstrap.");
+      throw new Error("Users already exist — refusing to create first admin.");
     }
 
     let bootRows = [];
@@ -84,7 +84,7 @@ async function createAdmin(client) {
       bootRows = [];
     }
     if (bootRows[0]) {
-      throw new Error("Bootstrap already completed — refusing.");
+      throw new Error("First admin already created — refusing.");
     }
 
     const hash = bcrypt.hashSync(password, 10);
@@ -102,7 +102,7 @@ async function createAdmin(client) {
       );
     } catch {
       await client.query("DELETE FROM users WHERE id = $1", [user.id]).catch(() => undefined);
-      throw new Error("Bootstrap already completed — refusing.");
+      throw new Error("First admin already created — refusing.");
     }
     console.log(`Created admin id=${user.id} username=${user.username}`);
   } finally {

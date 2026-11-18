@@ -70,7 +70,7 @@ Do **not** make the sheet public. The `/exec` URL + token is the gate.
 - **Fixtures** when nothing else is configured
 - Optional `GOOGLE_SERVICE_ACCOUNT_FILE` (Cloud Console; often hits a billing wall — avoid for Don)
 
-Without Apps Script URL/token, the app loads `data/fixture-database.csv` (Lindor, Esperanza Morales, Maria Martinez) until you paste CSV or configure the web app.
+Without Apps Script URL/token, the app loads embedded sample rows (Lindor, Esperanza Morales, Maria Martinez) until you paste CSV or configure the web app.
 
 ## Product rules (from plan)
 
@@ -87,5 +87,6 @@ Without Apps Script URL/token, the app loads `data/fixture-database.csv` (Lindor
 | `npm run build`   | Production build       |
 | `npm run start`   | Production server      |
 | `npm run typecheck` | TypeScript check     |
+| `npm run create-admin` | Offline first admin (no HTTP setup) |
 
-SQLite file: `data/recovery-lists.db` (created on first run).
+Local DB: PGlite under `data/pglite` (or Postgres via `DATABASE_URL`).

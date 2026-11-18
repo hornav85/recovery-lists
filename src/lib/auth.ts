@@ -6,11 +6,41 @@ import { sql, toPublicUser, type PublicUser, type UserRow } from "./db";
 const COOKIE = "rl_session";
 const SESSION_DAYS = 14;
 const LOGIN_WINDOW_MS = 15 * 60 * 1000;
-const LOGIN_MAX_ATTEMPTS = 20;
+/** Username-only (primary), username+IP, and IP alone — Postgres-backed. */
+const LOGIN_MAX_ATTEMPTS_USER = 8;
+const LOGIN_MAX_ATTEMPTS_USER_IP = 8;
+const LOGIN_MAX_ATTEMPTS_IP = 40;
 const MIN_PASSWORD_LEN = 10;
 
 function cookieSecure(): boolean {
-  return process.env.NODE_ENV === "production";
+  // Hosted apps are always HTTPS even when NODE_ENV is unset/mis-set.
+  return (
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.CURSOR_APP_ID?.trim()) ||
+    Boolean(process.env.VERCEL) ||
+    process.env.COOKIE_SECURE === "1"
+  );
+}
+
+/**
+ * Client IP for rate limiting. Prefer platform headers; if using
+ * X-Forwarded-For, take the *rightmost* hop (appended by the trusted
+ * proxy). Never trust the leftmost value alone — clients can spoof it.
+ */
+export function clientIpFromRequest(req: Request): string {
+  const realIp = req.headers.get("x-real-ip")?.trim();
+  if (realIp) return realIp.slice(0, 128);
+
+  const forwarded = req.headers.get("x-forwarded-for");
+  if (forwarded) {
+    const parts = forwarded
+      .split(",")
+      .map((p) => p.trim())
+      .filter(Boolean);
+    if (parts.length > 0) return parts[parts.length - 1].slice(0, 128);
+  }
+
+  return "unknown";
 }
 
 function sessionCookieOptions(expires: Date) {
@@ -23,23 +53,58 @@ function sessionCookieOptions(expires: Date) {
   };
 }
 
-/** Shared across instances via Postgres. */
-export async function checkLoginRateLimit(key: string): Promise<boolean> {
+/** Shared across instances via Postgres. Returns false when over limit. */
+export async function checkLoginRateLimit(keys: {
+  user: string;
+  userIp: string;
+  ip: string;
+}): Promise<boolean> {
   const cutoff = new Date(Date.now() - LOGIN_WINDOW_MS).toISOString();
   await sql("DELETE FROM login_attempts WHERE attempted_at < $1", [cutoff]);
-  const rows = await sql<{ c: string | number }>(
-    `SELECT COUNT(*) AS c FROM login_attempts
-     WHERE rate_key = $1 AND attempted_at >= $2`,
-    [key, cutoff],
-  );
-  return Number(rows[0]?.c ?? 0) < LOGIN_MAX_ATTEMPTS;
+
+  let locked = false;
+  try {
+    await sql("SELECT pg_advisory_lock($1)", [7272751]);
+    locked = true;
+  } catch {
+    locked = false;
+  }
+  try {
+    const countFor = async (key: string) => {
+      const rows = await sql<{ c: string | number }>(
+        `SELECT COUNT(*) AS c FROM login_attempts
+         WHERE rate_key = $1 AND attempted_at >= $2`,
+        [key, cutoff],
+      );
+      return Number(rows[0]?.c ?? 0);
+    };
+    const userCount = await countFor(keys.user);
+    const userIpCount = await countFor(keys.userIp);
+    const ipCount = await countFor(keys.ip);
+    return (
+      userCount < LOGIN_MAX_ATTEMPTS_USER &&
+      userIpCount < LOGIN_MAX_ATTEMPTS_USER_IP &&
+      ipCount < LOGIN_MAX_ATTEMPTS_IP
+    );
+  } finally {
+    if (locked) {
+      await sql("SELECT pg_advisory_unlock($1)", [7272751]).catch(() => undefined);
+    }
+  }
 }
 
-export async function recordLoginAttempt(key: string) {
-  await sql("INSERT INTO login_attempts (rate_key, attempted_at) VALUES ($1, $2)", [
-    key,
-    new Date().toISOString(),
-  ]);
+export async function recordLoginAttempt(keys: {
+  user: string;
+  userIp: string;
+  ip: string;
+}) {
+  const now = new Date().toISOString();
+  for (const key of [keys.user, keys.userIp, keys.ip]) {
+    await sql("INSERT INTO login_attempts (rate_key, attempted_at) VALUES ($1, $2)", [
+      key,
+      now,
+    ]);
+  }
 }
 
 export async function login(
@@ -90,6 +155,17 @@ export async function changePassword(
     "UPDATE users SET password_hash = $1, must_change_password = 0 WHERE id = $2",
     [hashPassword(newPassword), userId],
   );
+  // Drop other sessions; keep the caller's current cookie if present.
+  const jar = await cookies();
+  const current = jar.get(COOKIE)?.value;
+  if (current) {
+    await sql("DELETE FROM sessions WHERE user_id = $1 AND token <> $2", [
+      userId,
+      current,
+    ]);
+  } else {
+    await sql("DELETE FROM sessions WHERE user_id = $1", [userId]);
+  }
   return { ok: true };
 }
 

@@ -1,13 +1,10 @@
 import fs from "fs";
-import path from "path";
 import { COL, rowFromCells, type LeadRow } from "./columns";
 import { sql } from "./db";
+import { FIXTURE_DATABASE_CSV, FIXTURE_DNC_CSV } from "./fixture-data";
 import { normalizeStatus } from "./statuses";
+import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
 import { prospectKey } from "./prospect";
-
-// Keep fixtures under src/ so they are never treated as statically servable public assets.
-const FIXTURE_DB = path.join(process.cwd(), "src", "server-data", "fixture-database.csv");
-const FIXTURE_DNC = path.join(process.cwd(), "src", "server-data", "fixture-dnc.csv");
 
 export type SyncResult = {
   mode: "google" | "apps-script" | "fixture" | "csv";
@@ -177,6 +174,7 @@ function objectsToLeadRows(objects: SheetObject[]): LeadRow[] {
 }
 
 async function upsertLeads(leads: LeadRow[], dncKeys: Set<string>) {
+  await ensureStoredPhonesNormalized();
   const insertSql = `
     INSERT INTO leads (
       sheet_row_index, prospect_key, prospect_id, lead_id, phone, name, address,
@@ -241,7 +239,7 @@ async function upsertLeads(leads: LeadRow[], dncKeys: Set<string>) {
       key,
       row.prospectId || null,
       row.leadId || null,
-      row.cell || null,
+      normalizePhone(row.cell),
       row.name || null,
       row.address || null,
       status,
@@ -353,9 +351,33 @@ export function getSyncConfig() {
   };
 }
 
+function fixturesAllowed(): boolean {
+  return !(
+    process.env.NODE_ENV === "production" ||
+    Boolean(process.env.CURSOR_APP_ID?.trim()) ||
+    Boolean(process.env.VERCEL)
+  );
+}
+
+async function fixtureOrUnavailable(prefix?: string): Promise<SyncResult> {
+  if (!fixturesAllowed()) {
+    const message =
+      (prefix ? `${prefix}; ` : "") +
+      "sample data is disabled on the hosted app — paste CSV or configure Apps Script";
+    const lastSyncAt = await setSyncMeta("csv", message);
+    return { mode: "csv", rowsUpserted: 0, dncMarked: 0, lastSyncAt, message };
+  }
+  const result = await loadFixtureIntoDb();
+  if (!prefix) return result;
+  return { ...result, message: `${prefix}; ${result.message}` };
+}
+
 export async function loadFixtureIntoDb(): Promise<SyncResult> {
-  const dbText = fs.readFileSync(FIXTURE_DB, "utf8");
-  const dncText = fs.existsSync(FIXTURE_DNC) ? fs.readFileSync(FIXTURE_DNC, "utf8") : "";
+  if (!fixturesAllowed()) {
+    throw new Error("Sample data load is disabled on the hosted app");
+  }
+  const dbText = FIXTURE_DATABASE_CSV;
+  const dncText = FIXTURE_DNC_CSV;
   const leads = cellsToLeadRows(parseCsv(dbText), true);
   const dncKeys = dncText ? parseDncKeys(parseCsv(dncText), true) : new Set<string>();
   const { upserted, dncMarked } = await upsertLeads(leads, dncKeys);
@@ -513,14 +535,18 @@ async function fetchAppsScriptJson(): Promise<{
     );
   }
   const url = new URL(base);
-  // Drop any pasted ?token=…; we always attach the bound secret token
+  // Never put the token in the query string (logs / Referer leakage).
   url.search = "";
-  url.searchParams.set("token", token);
 
   const res = await fetch(url.toString(), {
-    method: "GET",
+    method: "POST",
     redirect: "follow",
-    headers: { Accept: "application/json" },
+    headers: {
+      Accept: "application/json",
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+    },
+    body: JSON.stringify({ token }),
     cache: "no-store",
   });
 
@@ -584,16 +610,26 @@ async function fetchGoogleSheets(): Promise<{
   };
 }
 
+/** Max CSV paste size (chars) for admin sync — blocks unbounded uploads. */
+export const MAX_CSV_CHARS = 2_000_000;
+
 export async function runSync(opts?: {
   csvDatabase?: string;
   csvDnc?: string;
   forceFixture?: boolean;
 }): Promise<SyncResult> {
   if (opts?.csvDatabase) {
+    const dbLen = opts.csvDatabase.length;
+    const dncLen = opts.csvDnc?.length ?? 0;
+    if (dbLen > MAX_CSV_CHARS || dncLen > MAX_CSV_CHARS) {
+      throw new Error(
+        `CSV too large (max ${MAX_CSV_CHARS} characters per file)`,
+      );
+    }
     return syncFromCsvText(opts.csvDatabase, opts.csvDnc);
   }
   if (opts?.forceFixture) {
-    return loadFixtureIntoDb();
+    return fixtureOrUnavailable();
   }
 
   // Prefer Apps Script bridge (no Cloud billing) when configured
@@ -608,11 +644,9 @@ export async function runSync(opts?: {
     const keyFile = process.env.GOOGLE_SERVICE_ACCOUNT_FILE?.trim();
     const hasSa = Boolean(keyFile && fs.existsSync(keyFile));
     if (!hasSa) {
-      const fallback = await loadFixtureIntoDb();
-      return {
-        ...fallback,
-        message: `Apps Script sync failed (${msg}); loaded fixtures instead. CSV paste still works.`,
-      };
+      return fixtureOrUnavailable(
+        `Apps Script sync failed (${msg})`,
+      );
     }
     // else try google SA below
   }
@@ -629,14 +663,10 @@ export async function runSync(opts?: {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    const fallback = await loadFixtureIntoDb();
-    return {
-      ...fallback,
-      message: `Google sync failed (${msg}); loaded fixtures instead`,
-    };
+    return fixtureOrUnavailable(`Google sync failed (${msg})`);
   }
 
-  return loadFixtureIntoDb();
+  return fixtureOrUnavailable();
 }
 
 /** Exported for unit-style checks without a live deploy. */

@@ -5,6 +5,7 @@ import {
 } from "./attempts";
 import { sql, type PublicUser } from "./db";
 import { outcomeHiddenNow } from "./statuses";
+import { pacificYmd } from "./time";
 
 export type ManualListSummary = {
   id: number;
@@ -402,7 +403,9 @@ export async function getManualQueue(
     const history = attempts.get(row.prospect_key) || [];
     const latest = history[0] || null;
     if (latest && outcomeHiddenNow(latest.outcome, latest.created_at)) continue;
-    const attempt_count = history.length;
+    const attempt_count = new Set(
+      history.map((attempt) => pacificYmd(new Date(attempt.created_at))),
+    ).size;
     queue.push({
       ...toManualRow(row),
       attempt_count,
