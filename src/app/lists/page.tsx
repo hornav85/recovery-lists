@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
+import { AdditionalSearchHits } from "@/components/AdditionalSearchHits";
 import { AdminLeadSearch } from "@/components/AdminLeadSearch";
 import { AppShell } from "@/components/AppShell";
 import { ListDateControls } from "@/components/ListDateControls";
@@ -17,6 +18,7 @@ import {
   type QueueLead,
 } from "@/lib/leads";
 import { applyQueueView, filterQueueBySearch, listViewSearch, parseQueueSort, sortLabel } from "@/lib/queue-filters";
+import { searchVisibleManualRows } from "@/lib/manual-lists";
 import { normalizeStatus } from "@/lib/statuses";
 
 function buildHref(opts: {
@@ -141,6 +143,7 @@ export default async function ListsPage({
   const allMatches = findQuery
     ? filterQueueBySearch(await getAllVisibleLeads(), findQuery)
     : [];
+  const additionalMatches = findQuery ? await searchVisibleManualRows(findQuery) : [];
 
   const activeStatus =
     view === "status" ? sp.status || statuses[0]?.name || "" : "";
@@ -207,27 +210,35 @@ export default async function ListsPage({
               <h2>
                 All lists{" "}
                 <span className="muted" style={{ fontWeight: 400 }}>
-                  ({allMatches.length})
+                  ({allMatches.length + additionalMatches.length})
                 </span>
               </h2>
               <p className="muted" style={{ marginTop: 0 }}>
-                Matches for “{findQuery}” in every list.
+                Matches for “{findQuery}” in every recovery list and additional list.
               </p>
-              <QueueTable
-                queue={allMatches}
-                showList
-                empty="No leads match in any list."
-                returnQuery={listViewSearch({
-                  view: view === "attempts" ? "attempts" : undefined,
-                  status: view === "status" ? activeStatus || undefined : undefined,
-                  attempts: activeAttemptBucket || undefined,
-                  sort,
-                  from: fromYmd || undefined,
-                  to: toYmd || undefined,
-                  q: searchQuery || undefined,
-                  find: findQuery || undefined,
-                })}
-              />
+              {allMatches.length === 0 && additionalMatches.length === 0 ? (
+                <p className="muted">No leads match in any list.</p>
+              ) : (
+                <>
+                  {allMatches.length > 0 ? (
+                    <QueueTable
+                      queue={allMatches}
+                      showList
+                      returnQuery={listViewSearch({
+                        view: view === "attempts" ? "attempts" : undefined,
+                        status: view === "status" ? activeStatus || undefined : undefined,
+                        attempts: activeAttemptBucket || undefined,
+                        sort,
+                        from: fromYmd || undefined,
+                        to: toYmd || undefined,
+                        q: searchQuery || undefined,
+                        find: findQuery || undefined,
+                      })}
+                    />
+                  ) : null}
+                  <AdditionalSearchHits hits={additionalMatches} find={findQuery} />
+                </>
+              )}
             </div>
           ) : null}
         </>

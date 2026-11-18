@@ -9,12 +9,14 @@ export function AdminLeadSearch({
   paramName = "q",
   label = "Search leads",
   placeholder = "Name, phone, address, status, project…",
+  hrefBase = "/lists",
 }: {
   query: string;
   baseParams: Record<string, string | undefined>;
   paramName?: string;
   label?: string;
   placeholder?: string;
+  hrefBase?: string;
 }) {
   const router = useRouter();
   const [value, setValue] = useState(query);
@@ -29,7 +31,7 @@ export function AdminLeadSearch({
       if (v) p.set(k, v);
     }
     const s = p.toString();
-    return s ? `/lists?${s}` : "/lists";
+    return s ? `${hrefBase}?${s}` : hrefBase;
   }
 
   function apply(e: FormEvent) {

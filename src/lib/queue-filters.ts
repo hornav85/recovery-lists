@@ -148,18 +148,24 @@ function isPhoneLikeQuery(query: string): boolean {
   return /\d/.test(query) && !/[a-z]/.test(query);
 }
 
-export function leadMatchesSearch(lead: QueueLead, rawQuery: string): boolean {
+/** Case-insensitive text match. Digit-only queries also match phones with punctuation. */
+export function fieldMatchesQuery(value: string, rawQuery: string): boolean {
   const query = rawQuery.trim().toLowerCase();
   if (!query) return true;
-  const phoneLike = isPhoneLikeQuery(query);
-  const queryDigits = phoneLike ? digitsOnly(query) : "";
+  const text = value.toLowerCase();
+  if (text.includes(query)) return true;
+  if (!isPhoneLikeQuery(rawQuery)) return false;
+  const queryDigits = digitsOnly(rawQuery);
+  return Boolean(queryDigits) && digitsOnly(text).includes(queryDigits);
+}
 
+export function leadMatchesSearch(lead: QueueLead, rawQuery: string): boolean {
+  const query = rawQuery.trim();
+  if (!query) return true;
   for (const key of LEAD_SEARCH_FIELDS) {
     const value = lead[key];
     if (value == null) continue;
-    const text = String(value).toLowerCase();
-    if (text.includes(query)) return true;
-    if (key === "phone" && queryDigits && digitsOnly(text).includes(queryDigits)) return true;
+    if (fieldMatchesQuery(String(value), query)) return true;
   }
   return false;
 }
