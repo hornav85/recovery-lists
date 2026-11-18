@@ -4,7 +4,15 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ATTEMPT_OUTCOMES } from "@/lib/statuses";
 
-export function AttemptForm({ leadId }: { leadId: number }) {
+export function AttemptForm({
+  leadId,
+  manualRowId,
+  returnTo,
+}: {
+  leadId?: number;
+  manualRowId?: number;
+  returnTo?: string;
+}) {
   const router = useRouter();
   const [outcome, setOutcome] = useState<string>("");
   const [notes, setNotes] = useState("");
@@ -20,10 +28,12 @@ export function AttemptForm({ leadId }: { leadId: number }) {
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/attempts", {
+      const res = await fetch(manualRowId ? "/api/manual-attempts" : "/api/attempts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId, outcome, notes }),
+        body: JSON.stringify(
+          manualRowId ? { rowId: manualRowId, outcome, notes } : { leadId, outcome, notes },
+        ),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -34,7 +44,7 @@ export function AttemptForm({ leadId }: { leadId: number }) {
       router.refresh();
       // Stay on lists so Recovered/DNC remain visible through end of day.
       if (outcome === "Recovered" || outcome === "DNC") {
-        router.push("/lists");
+        router.push(returnTo || (manualRowId ? "/additional-lists" : "/lists"));
       }
     } catch {
       setError("Network error");
@@ -62,8 +72,8 @@ export function AttemptForm({ leadId }: { leadId: number }) {
       </label>
       <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
         Timestamp and your display name are stamped automatically. Same prospect, same day:
-        saving again replaces today&apos;s outcome (does not add a second attempt). Attempts stay
-        in the app database only — never written to Google Sheets.
+        saving again replaces today&apos;s outcome (does not add a second attempt). Callback is an
+        outcome. Notes stay on the attempt. Nothing here is written to Google Sheets.
       </p>
       {error && <div className="error">{error}</div>}
       <button className="btn" type="submit" disabled={saving || !outcome}>

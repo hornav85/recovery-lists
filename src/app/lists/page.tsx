@@ -16,7 +16,7 @@ import {
   getQueueForStatus,
   type QueueLead,
 } from "@/lib/leads";
-import { applyQueueView, filterQueueBySearch, parseQueueSort, sortLabel } from "@/lib/queue-filters";
+import { applyQueueView, filterQueueBySearch, listViewSearch, parseQueueSort, sortLabel } from "@/lib/queue-filters";
 import { normalizeStatus } from "@/lib/statuses";
 
 function buildHref(opts: {
@@ -44,10 +44,12 @@ function buildHref(opts: {
 
 function QueueTable({
   queue,
+  returnQuery,
   showList = false,
   empty = "No visible leads in this list.",
 }: {
   queue: QueueLead[];
+  returnQuery: string;
   showList?: boolean;
   empty?: string;
 }) {
@@ -76,7 +78,9 @@ function QueueTable({
               </td>
             ) : null}
             <td>
-              <Link href={`/leads/${lead.id}`}>{lead.name || "—"}</Link>
+              <Link href={returnQuery ? `/leads/${lead.id}?${returnQuery}` : `/leads/${lead.id}`}>
+                {lead.name || "—"}
+              </Link>
             </td>
             <td>
               <PhoneLink phone={lead.phone} />
@@ -213,6 +217,16 @@ export default async function ListsPage({
                 queue={allMatches}
                 showList
                 empty="No leads match in any list."
+                returnQuery={listViewSearch({
+                  view: view === "attempts" ? "attempts" : undefined,
+                  status: view === "status" ? activeStatus || undefined : undefined,
+                  attempts: activeAttemptBucket || undefined,
+                  sort,
+                  from: fromYmd || undefined,
+                  to: toYmd || undefined,
+                  q: searchQuery || undefined,
+                  find: findQuery || undefined,
+                })}
               />
             </div>
           ) : null}
@@ -437,7 +451,19 @@ export default async function ListsPage({
               Download CSV
             </a>
           </div>
-          <QueueTable queue={queue} />
+          <QueueTable
+            queue={queue}
+            returnQuery={listViewSearch({
+              view: view === "attempts" ? "attempts" : undefined,
+              status: view === "status" ? activeStatus || undefined : undefined,
+              attempts: activeAttemptBucket || undefined,
+              sort,
+              from: fromYmd || undefined,
+              to: toYmd || undefined,
+              q: searchQuery || undefined,
+              find: findQuery || undefined,
+            })}
+          />
         </div>
       )}
     </AppShell>

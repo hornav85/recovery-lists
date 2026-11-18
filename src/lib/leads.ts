@@ -4,8 +4,8 @@ import {
   countInBucket,
 } from "./attempts";
 import { sql, type PublicUser } from "./db";
-import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
 import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
+import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
 import { activeSortValue } from "./prospect";
 import { pacificYmd } from "./time";
 

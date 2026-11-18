@@ -11,6 +11,7 @@ import {
   type AttemptRow,
   type LeadDb,
 } from "@/lib/leads";
+import { listsPath } from "@/lib/queue-filters";
 
 function LeadFields({
   lead,
@@ -150,14 +151,41 @@ function NotesPanel({
 
 export default async function LeadPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ id: string }>;
+  searchParams: Promise<{
+    status?: string;
+    attempts?: string;
+    view?: string;
+    sort?: string;
+    from?: string;
+    to?: string;
+    q?: string;
+    find?: string;
+  }>;
 }) {
   const user = await getSessionUser();
   if (!user) redirect("/login");
   await ensureFixtureLeads();
 
   const { id } = await params;
+  const sp = await searchParams;
+  const backHref = listsPath({
+    view: sp.view,
+    status: sp.status,
+    attempts: sp.attempts,
+    sort: sp.sort,
+    from: sp.from,
+    to: sp.to,
+    q: sp.q,
+    find: sp.find,
+  });
+  const here = new URLSearchParams();
+  const q = backHref.split("?")[1];
+  if (q) {
+    for (const [key, value] of new URLSearchParams(q)) here.set(key, value);
+  }
   const leadId = Number(id);
   if (!Number.isFinite(leadId)) notFound();
 
@@ -171,7 +199,7 @@ export default async function LeadPage({
   return (
     <AppShell user={user}>
       <p>
-        <Link href="/lists">← Back to lists</Link>
+        <Link href={backHref}>← Back to lists</Link>
       </p>
       <h1>{active.name || "Lead"}</h1>
       <p className="muted">
@@ -191,7 +219,10 @@ export default async function LeadPage({
           <span className="badge warn">Viewing a history row</span>
           <p className="muted" style={{ marginBottom: 0 }}>
             Attempts attach to the prospect; the active card is{" "}
-            <Link href={`/leads/${active.id}`}>lead #{active.id}</Link>.
+            <Link href={here.size ? `/leads/${active.id}?${here}` : `/leads/${active.id}`}>
+              lead #{active.id}
+            </Link>
+            .
           </p>
         </div>
       )}
@@ -207,7 +238,7 @@ export default async function LeadPage({
 
       <div className="card">
         <h2>Log call attempt</h2>
-        <AttemptForm leadId={active.id} />
+        <AttemptForm leadId={active.id} returnTo={backHref} />
       </div>
 
       <div className="card">

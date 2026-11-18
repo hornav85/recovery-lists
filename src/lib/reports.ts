@@ -3,6 +3,7 @@ import { ensureStoredPhonesNormalized, normalizePhone } from "./phone";
 import { assignmentsAsOf } from "./assignments";
 import { sql } from "./db";
 import { getQueueForStatus } from "./leads";
+import { manualQueueCount } from "./manual-lists";
 import { ATTEMPT_OUTCOMES } from "./statuses";
 import { type DateRange, pacificYmd, REPORT_TZ } from "./time";
 
@@ -23,6 +24,7 @@ export type AgentReportRow = {
   dialsPerHour: number;
   assignedStatusNames: string[];
   assignedAttemptBuckets: string[];
+  assignedManualListNames: string[];
   assignmentSnapshotAt: string | null;
 };
 
@@ -147,6 +149,75 @@ async function loadAttempts(range: DateRange, agentId?: number | null): Promise<
   );
 }
 
+const MANUAL_ATTEMPT_SELECT = `SELECT a.id, a.outcome, a.notes, a.created_at, a.agent_user_id, a.agent_display_name,
+              ('manual:' || COALESCE(a.list_id::text, a.list_name) || ':' || a.prospect_key) AS prospect_key,
+              a.list_name AS lead_status,
+              r.name AS lead_name,
+              r.phone AS lead_phone,
+              r.fields_json AS fields_json,
+              u.username, u.display_name
+       FROM manual_attempts a
+       JOIN users u ON u.id = a.agent_user_id
+       LEFT JOIN manual_list_rows r ON r.id = a.row_id`;
+
+function fieldValue(fieldsJson: string | null | undefined, aliases: string[]): string {
+  if (!fieldsJson) return "";
+  try {
+    const fields = JSON.parse(fieldsJson) as Record<string, unknown>;
+    const wanted = new Set(aliases);
+    for (const [key, value] of Object.entries(fields)) {
+      const norm = key.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+      if (wanted.has(norm) && value != null && String(value).trim()) return String(value).trim();
+    }
+  } catch {
+    return "";
+  }
+  return "";
+}
+
+async function loadManualAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
+  type Row = AttemptJoin & { fields_json?: string | null };
+  const rows =
+    agentId && Number.isFinite(agentId)
+      ? await sql<Row>(
+          `${MANUAL_ATTEMPT_SELECT}
+           WHERE a.created_at::timestamptz >= $1::timestamptz
+             AND a.created_at::timestamptz < $2::timestamptz
+             AND a.agent_user_id = $3
+           ORDER BY a.created_at ASC
+           LIMIT $4`,
+          [range.fromIso, range.toIsoExclusive, agentId, REPORT_ATTEMPTS_LIMIT],
+        )
+      : await sql<Row>(
+          `${MANUAL_ATTEMPT_SELECT}
+           WHERE a.created_at::timestamptz >= $1::timestamptz
+             AND a.created_at::timestamptz < $2::timestamptz
+           ORDER BY a.created_at ASC
+           LIMIT $3`,
+          [range.fromIso, range.toIsoExclusive, REPORT_ATTEMPTS_LIMIT],
+        );
+  return rows.map((row) => ({
+    id: row.id,
+    outcome: row.outcome,
+    notes: row.notes,
+    created_at: row.created_at,
+    agent_user_id: row.agent_user_id,
+    agent_display_name: row.agent_display_name,
+    prospect_key: row.prospect_key,
+    lead_status: row.lead_status,
+    lead_name: row.lead_name,
+    lead_phone: row.lead_phone,
+    lead_address: fieldValue(row.fields_json, ["address", "street", "street address"]),
+    lead_project: fieldValue(row.fields_json, ["project"]),
+    lead_prospect_id: null,
+    lead_sheet_lead_id: null,
+    lead_sheet_row_index: null,
+    lead_is_dnc: 0,
+    username: row.username,
+    display_name: row.display_name,
+  }));
+}
+
 function toCallDetail(a: AttemptJoin): CallDetailRow {
   return {
     attemptId: a.id,
@@ -169,7 +240,11 @@ function toCallDetail(a: AttemptJoin): CallDetailRow {
 }
 
 export async function buildReports(range: DateRange, agentId?: number | null) {
-  const attempts = await loadAttempts(range, agentId);
+  const sheetAttempts = await loadAttempts(range, agentId);
+  const manualAttempts = await loadManualAttempts(range, agentId);
+  const attempts = [...sheetAttempts, ...manualAttempts].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id,
+  );
   const asOfIso = new Date(new Date(range.toIsoExclusive).getTime() - 1).toISOString();
 
   const byAgent = new Map<number, AgentReportRow>();
@@ -197,6 +272,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
         dialsPerHour: 0,
         assignedStatusNames: [],
         assignedAttemptBuckets: [],
+        assignedManualListNames: [],
         assignmentSnapshotAt: null,
       };
       byAgent.set(a.agent_user_id, agent);
@@ -245,6 +321,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
     const snap = await assignmentsAsOf(agent.agentId, asOfIso);
     agent.assignedStatusNames = snap.statusNames;
     agent.assignedAttemptBuckets = snap.attemptBuckets.map((b) => bucketLabel(b));
+    agent.assignedManualListNames = snap.manualListNames;
     agent.assignmentSnapshotAt = snap.snapshot_at;
   }
 
@@ -264,7 +341,13 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
     if (agentId && u.id !== agentId) continue;
     if (byAgent.has(u.id)) continue;
     const snap = await assignmentsAsOf(u.id, asOfIso);
-    if (snap.statusNames.length === 0 && snap.attemptBuckets.length === 0) continue;
+    if (
+      snap.statusNames.length === 0 &&
+      snap.attemptBuckets.length === 0 &&
+      snap.manualListNames.length === 0
+    ) {
+      continue;
+    }
     byAgent.set(u.id, {
       agentId: u.id,
       displayName: u.display_name,
@@ -280,6 +363,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
       dialsPerHour: 0,
       assignedStatusNames: snap.statusNames,
       assignedAttemptBuckets: snap.attemptBuckets.map((b) => bucketLabel(b)),
+      assignedManualListNames: snap.manualListNames,
       assignmentSnapshotAt: snap.snapshot_at,
     });
   }
@@ -303,6 +387,14 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
         displayName: agent.displayName,
         statusName,
         remaining: queue.length,
+      });
+    }
+    for (const listName of agent.assignedManualListNames) {
+      leftover.push({
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        statusName: listName,
+        remaining: await manualQueueCount(listName),
       });
     }
   }
@@ -362,6 +454,7 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
       "Active hours",
       "Assigned statuses",
       "Assigned attempt lists",
+      "Assigned additional lists",
       ...ATTEMPT_OUTCOMES,
     ].join(","),
   );
@@ -378,6 +471,7 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
         a.activeHours,
         a.assignedStatusNames.join("; "),
         a.assignedAttemptBuckets.join("; "),
+        a.assignedManualListNames.join("; "),
         ...ATTEMPT_OUTCOMES.map((o) => a.outcomes[o] || 0),
       ]
         .map(esc)
@@ -386,7 +480,7 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
   }
 
   lines.push("");
-  lines.push(["Status list", "Dials", "Recovered", "Recovery rate %"].join(","));
+  lines.push(["List", "Dials", "Recovered", "Recovery rate %"].join(","));
   for (const l of data.listPerformance) {
     lines.push([l.status, l.dials, l.recovered, l.recoveryRate].map(esc).join(","));
   }

@@ -30,6 +30,19 @@ async function attemptAssignmentsByUserMap() {
   return map;
 }
 
+async function manualAssignmentsByUserMap() {
+  const rows = await sql<{ user_id: number; list_id: number }>(
+    `SELECT user_id, list_id FROM manual_list_assignments`,
+  );
+  const map: Record<string, number[]> = {};
+  for (const row of rows) {
+    const key = String(row.user_id);
+    if (!map[key]) map[key] = [];
+    map[key].push(row.list_id);
+  }
+  return map;
+}
+
 export async function GET(req: Request) {
   try {
     await ensureFixtureLeads();
@@ -41,6 +54,10 @@ export async function GET(req: Request) {
 
     const assignmentsByUser = await assignmentsByUserMap();
     const attemptAssignmentsByUser = await attemptAssignmentsByUserMap();
+    const manualLists = await sql<{ id: number; name: string }>(
+      `SELECT id, name FROM manual_lists ORDER BY name`,
+    );
+    const manualAssignmentsByUser = await manualAssignmentsByUserMap();
     const attemptBuckets = ATTEMPT_BUCKETS.map((b) => ({ id: b.id, label: b.label }));
 
     if (!Number.isFinite(userId)) {
@@ -49,6 +66,8 @@ export async function GET(req: Request) {
         assignmentsByUser,
         attemptBuckets,
         attemptAssignmentsByUser,
+        manualLists,
+        manualAssignmentsByUser,
       });
     }
 
@@ -59,6 +78,9 @@ export async function GET(req: Request) {
       attemptBuckets,
       assignedAttemptBuckets: attemptAssignmentsByUser[String(userId)] || [],
       attemptAssignmentsByUser,
+      manualLists,
+      assignedManualListIds: manualAssignmentsByUser[String(userId)] || [],
+      manualAssignmentsByUser,
     });
   } catch (e) {
     if (e instanceof AuthError) {
@@ -83,6 +105,9 @@ export async function PUT(req: Request) {
           .map((b: unknown) => String(b))
           .filter((b: string): b is AttemptBucketId => validBuckets.has(b as AttemptBucketId))
       : [];
+    const manualListIds = Array.isArray(body.manualListIds)
+      ? body.manualListIds.map((n: unknown) => Number(n)).filter((n: number) => Number.isFinite(n))
+      : null;
 
     if (!Number.isFinite(userId)) {
       return NextResponse.json({ error: "userId required" }, { status: 400 });
@@ -104,6 +129,20 @@ export async function PUT(req: Request) {
       ]);
     }
 
+    if (manualListIds) {
+      await sql("DELETE FROM manual_list_assignments WHERE user_id = $1", [userId]);
+      for (const listId of manualListIds) {
+        const exists = await sql<{ id: number }>("SELECT id FROM manual_lists WHERE id = $1", [
+          listId,
+        ]);
+        if (!exists[0]) continue;
+        await sql(
+          "INSERT INTO manual_list_assignments (user_id, list_id) VALUES ($1, $2)",
+          [userId, listId],
+        );
+      }
+    }
+
     // Day-one history: every save becomes a dated snapshot for reports
     await saveAssignmentSnapshot(userId, admin.id);
 
@@ -114,8 +153,11 @@ export async function PUT(req: Request) {
       assignedStatusIds: statusIds,
       attemptBuckets,
       assignedAttemptBuckets: attemptBuckets,
+      manualListIds: manualListIds || [],
+      assignedManualListIds: manualListIds || (await manualAssignmentsByUserMap())[String(userId)] || [],
       assignmentsByUser: await assignmentsByUserMap(),
       attemptAssignmentsByUser: await attemptAssignmentsByUserMap(),
+      manualAssignmentsByUser: await manualAssignmentsByUserMap(),
     });
   } catch (e) {
     if (e instanceof AuthError) {
