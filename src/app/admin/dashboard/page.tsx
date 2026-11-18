@@ -21,6 +21,7 @@ type DashReport = {
     recovered: number;
     dialsPerHour: number;
     assignedStatusNames: string[];
+    assignedManualListNames?: string[];
   }>;
   dayHistory: Array<{ day: string; dials: number; recovered: number }>;
   listPerformance: Array<{ status: string; dials: number; recovered: number }>;
@@ -213,12 +214,19 @@ export default function AdminDashboardPage() {
                   <tr key={a.displayName}>
                     <td>{a.displayName}</td>
                     <td>
-                      {a.assignedStatusNames.length ? (
-                        a.assignedStatusNames.map((n) => (
-                          <span key={n} className="badge ok" style={{ marginRight: 4 }}>
-                            {n}
-                          </span>
-                        ))
+                      {a.assignedStatusNames.length || (a.assignedManualListNames || []).length ? (
+                        <>
+                          {a.assignedStatusNames.map((n) => (
+                            <span key={n} className="badge ok" style={{ marginRight: 4 }}>
+                              {n}
+                            </span>
+                          ))}
+                          {(a.assignedManualListNames || []).map((n) => (
+                            <span key={`m-${n}`} className="badge" style={{ marginRight: 4 }}>
+                              {n}
+                            </span>
+                          ))}
+                        </>
                       ) : (
                         <span className="muted">—</span>
                       )}

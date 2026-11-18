@@ -4,7 +4,7 @@ import {
   countInBucket,
 } from "./attempts";
 import { sql, type PublicUser } from "./db";
-import { HIDDEN_OUTCOMES, normalizeStatus } from "./statuses";
+import { normalizeStatus, outcomeHiddenNow } from "./statuses";
 import { activeSortValue } from "./prospect";
 
 export type LeadDb = {
@@ -115,7 +115,12 @@ export function isHiddenLead(
 ): boolean {
   if (lead.is_dnc) return true;
   if ((lead.status || "").toUpperCase() === "DNC") return true;
-  if (latestAttempt && HIDDEN_OUTCOMES.has(latestAttempt.outcome)) return true;
+  if (
+    latestAttempt &&
+    outcomeHiddenNow(latestAttempt.outcome, latestAttempt.created_at)
+  ) {
+    return true;
+  }
   return false;
 }
 

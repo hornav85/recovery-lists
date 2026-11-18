@@ -34,6 +34,7 @@ export function AppShell({
         </Link>
         <nav className="nav">
           <Link href="/lists">Lists</Link>
+          <Link href="/additional-lists">Additional lists</Link>
           {user.role === "admin" && (
             <>
               <Link href="/admin/dashboard">Dashboard</Link>

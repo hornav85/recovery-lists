@@ -5,12 +5,13 @@ export type AssignmentSnapshot = {
   snapshot_at: string;
   statusNames: string[];
   attemptBuckets: string[];
+  manualListNames: string[];
   by_admin_id: number | null;
 };
 
 export async function readCurrentAssignments(
   userId: number
-): Promise<{ statusNames: string[]; attemptBuckets: string[] }> {
+): Promise<{ statusNames: string[]; attemptBuckets: string[]; manualListNames: string[] }> {
   const statusRows = await sql<{ name: string }>(
     `SELECT s.name FROM agent_assignments a
      JOIN list_statuses s ON s.id = a.status_id
@@ -26,29 +27,39 @@ export async function readCurrentAssignments(
   );
   const attemptBuckets = bucketRows.map((r) => r.bucket);
 
-  return { statusNames, attemptBuckets };
+  const manualRows = await sql<{ name: string }>(
+    `SELECT l.name FROM manual_list_assignments a
+     JOIN manual_lists l ON l.id = a.list_id
+     WHERE a.user_id = $1
+     ORDER BY l.name`,
+    [userId],
+  );
+
+  return { statusNames, attemptBuckets, manualListNames: manualRows.map((r) => r.name) };
 }
 
 export async function saveAssignmentSnapshot(
   userId: number,
   byAdminId: number | null,
   statusNames?: string[],
-  attemptBuckets?: string[]
+  attemptBuckets?: string[],
+  manualListNames?: string[],
 ) {
   const current =
-    statusNames && attemptBuckets
-      ? { statusNames, attemptBuckets }
+    statusNames && attemptBuckets && manualListNames
+      ? { statusNames, attemptBuckets, manualListNames }
       : await readCurrentAssignments(userId);
 
   await sql(
     `INSERT INTO assignment_snapshots
-      (user_id, snapshot_at, status_names_json, attempt_buckets_json, by_admin_id)
-     VALUES ($1, $2, $3, $4, $5)`,
+      (user_id, snapshot_at, status_names_json, attempt_buckets_json, manual_list_names_json, by_admin_id)
+     VALUES ($1, $2, $3, $4, $5, $6)`,
     [
       userId,
       new Date().toISOString(),
       JSON.stringify(current.statusNames),
       JSON.stringify(current.attemptBuckets),
+      JSON.stringify(current.manualListNames),
       byAdminId,
     ],
   );
@@ -58,13 +69,19 @@ export async function saveAssignmentSnapshot(
 export async function assignmentsAsOf(
   userId: number,
   atIso: string
-): Promise<{ statusNames: string[]; attemptBuckets: string[]; snapshot_at: string | null }> {
+): Promise<{
+  statusNames: string[];
+  attemptBuckets: string[];
+  manualListNames: string[];
+  snapshot_at: string | null;
+}> {
   const rows = await sql<{
     snapshot_at: string;
     status_names_json: string;
     attempt_buckets_json: string;
+    manual_list_names_json: string | null;
   }>(
-    `SELECT snapshot_at, status_names_json, attempt_buckets_json
+    `SELECT snapshot_at, status_names_json, attempt_buckets_json, manual_list_names_json
      FROM assignment_snapshots
      WHERE user_id = $1 AND snapshot_at <= $2
      ORDER BY snapshot_at DESC, id DESC
@@ -82,6 +99,7 @@ export async function assignmentsAsOf(
   return {
     statusNames: JSON.parse(row.status_names_json || "[]") as string[],
     attemptBuckets: JSON.parse(row.attempt_buckets_json || "[]") as string[],
+    manualListNames: JSON.parse(row.manual_list_names_json || "[]") as string[],
     snapshot_at: row.snapshot_at,
   };
 }
@@ -99,7 +117,13 @@ export async function bootstrapAssignmentSnapshots() {
     );
     if (existing[0]) continue;
     const cur = await readCurrentAssignments(u.id);
-    if (cur.statusNames.length === 0 && cur.attemptBuckets.length === 0) continue;
+    if (
+      cur.statusNames.length === 0 &&
+      cur.attemptBuckets.length === 0 &&
+      cur.manualListNames.length === 0
+    ) {
+      continue;
+    }
     await saveAssignmentSnapshot(u.id, null, cur.statusNames, cur.attemptBuckets);
   }
 }

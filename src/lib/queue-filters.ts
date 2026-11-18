@@ -9,6 +9,38 @@ export function parseQueueSort(raw: string | null | undefined): QueueSort {
   return "attempts";
 }
 
+/** Query string for the lists page, omitting the default fewest-attempts sort. */
+export function listViewSearch(opts: {
+  view?: string;
+  status?: string;
+  attempts?: string;
+  sort?: string;
+  from?: string;
+  to?: string;
+}): string {
+  const p = new URLSearchParams();
+  if (opts.view === "attempts") p.set("view", "attempts");
+  if (opts.status) p.set("status", opts.status);
+  if (opts.attempts) p.set("attempts", opts.attempts);
+  if (opts.sort && opts.sort !== "attempts") p.set("sort", opts.sort);
+  if (opts.from) p.set("from", opts.from);
+  if (opts.to) p.set("to", opts.to);
+  const q = p.toString();
+  return q;
+}
+
+export function listsPath(opts: {
+  view?: string;
+  status?: string;
+  attempts?: string;
+  sort?: string;
+  from?: string;
+  to?: string;
+}): string {
+  const q = listViewSearch(opts);
+  return q ? `/lists?${q}` : "/lists";
+}
+
 export function sortLabel(sort: QueueSort): string {
   if (sort === "appt-desc") return "Newest appointment first";
   if (sort === "appt-asc") return "Oldest appointment first";

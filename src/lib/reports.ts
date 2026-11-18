@@ -2,6 +2,7 @@ import { bucketLabel } from "./attempts";
 import { assignmentsAsOf } from "./assignments";
 import { sql } from "./db";
 import { getQueueForStatus } from "./leads";
+import { manualQueueCount } from "./manual-lists";
 import { ATTEMPT_OUTCOMES } from "./statuses";
 import { type DateRange, pacificYmd, REPORT_TZ } from "./time";
 
@@ -22,6 +23,7 @@ export type AgentReportRow = {
   dialsPerHour: number;
   assignedStatusNames: string[];
   assignedAttemptBuckets: string[];
+  assignedManualListNames: string[];
   assignmentSnapshotAt: string | null;
 };
 
@@ -105,8 +107,40 @@ async function loadAttempts(range: DateRange, agentId?: number | null): Promise<
   );
 }
 
+async function loadManualAttempts(range: DateRange, agentId?: number | null): Promise<AttemptJoin[]> {
+  if (agentId && Number.isFinite(agentId)) {
+    return sql<AttemptJoin>(
+      `SELECT a.id, a.outcome, a.created_at, a.agent_user_id, a.agent_display_name,
+              ('manual:' || COALESCE(a.list_id::text, a.list_name) || ':' || a.prospect_key) AS prospect_key,
+              a.list_name AS lead_status, u.username, u.display_name
+       FROM manual_attempts a
+       JOIN users u ON u.id = a.agent_user_id
+       WHERE a.created_at::timestamptz >= $1::timestamptz
+         AND a.created_at::timestamptz < $2::timestamptz
+         AND a.agent_user_id = $3
+       ORDER BY a.created_at ASC`,
+      [range.fromIso, range.toIsoExclusive, agentId],
+    );
+  }
+  return sql<AttemptJoin>(
+    `SELECT a.id, a.outcome, a.created_at, a.agent_user_id, a.agent_display_name,
+            ('manual:' || COALESCE(a.list_id::text, a.list_name) || ':' || a.prospect_key) AS prospect_key,
+            a.list_name AS lead_status, u.username, u.display_name
+     FROM manual_attempts a
+     JOIN users u ON u.id = a.agent_user_id
+     WHERE a.created_at::timestamptz >= $1::timestamptz
+       AND a.created_at::timestamptz < $2::timestamptz
+     ORDER BY a.created_at ASC`,
+    [range.fromIso, range.toIsoExclusive],
+  );
+}
+
 export async function buildReports(range: DateRange, agentId?: number | null) {
-  const attempts = await loadAttempts(range, agentId);
+  const sheetAttempts = await loadAttempts(range, agentId);
+  const manualAttempts = await loadManualAttempts(range, agentId);
+  const attempts = [...sheetAttempts, ...manualAttempts].sort((a, b) =>
+    a.created_at < b.created_at ? -1 : a.created_at > b.created_at ? 1 : a.id - b.id,
+  );
   const asOfIso = new Date(new Date(range.toIsoExclusive).getTime() - 1).toISOString();
 
   const byAgent = new Map<number, AgentReportRow>();
@@ -134,6 +168,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
         dialsPerHour: 0,
         assignedStatusNames: [],
         assignedAttemptBuckets: [],
+        assignedManualListNames: [],
         assignmentSnapshotAt: null,
       };
       byAgent.set(a.agent_user_id, agent);
@@ -182,6 +217,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
     const snap = await assignmentsAsOf(agent.agentId, asOfIso);
     agent.assignedStatusNames = snap.statusNames;
     agent.assignedAttemptBuckets = snap.attemptBuckets.map((b) => bucketLabel(b));
+    agent.assignedManualListNames = snap.manualListNames;
     agent.assignmentSnapshotAt = snap.snapshot_at;
   }
 
@@ -201,7 +237,13 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
     if (agentId && u.id !== agentId) continue;
     if (byAgent.has(u.id)) continue;
     const snap = await assignmentsAsOf(u.id, asOfIso);
-    if (snap.statusNames.length === 0 && snap.attemptBuckets.length === 0) continue;
+    if (
+      snap.statusNames.length === 0 &&
+      snap.attemptBuckets.length === 0 &&
+      snap.manualListNames.length === 0
+    ) {
+      continue;
+    }
     byAgent.set(u.id, {
       agentId: u.id,
       displayName: u.display_name,
@@ -217,6 +259,7 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
       dialsPerHour: 0,
       assignedStatusNames: snap.statusNames,
       assignedAttemptBuckets: snap.attemptBuckets.map((b) => bucketLabel(b)),
+      assignedManualListNames: snap.manualListNames,
       assignmentSnapshotAt: snap.snapshot_at,
     });
   }
@@ -240,6 +283,14 @@ export async function buildReports(range: DateRange, agentId?: number | null) {
         displayName: agent.displayName,
         statusName,
         remaining: queue.length,
+      });
+    }
+    for (const listName of agent.assignedManualListNames) {
+      leftover.push({
+        agentId: agent.agentId,
+        displayName: agent.displayName,
+        statusName: listName,
+        remaining: await manualQueueCount(listName),
       });
     }
   }
@@ -297,6 +348,7 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
       "Active hours",
       "Assigned statuses",
       "Assigned attempt lists",
+      "Assigned additional lists",
       ...ATTEMPT_OUTCOMES,
     ].join(","),
   );
@@ -313,6 +365,7 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
         a.activeHours,
         a.assignedStatusNames.join("; "),
         a.assignedAttemptBuckets.join("; "),
+        a.assignedManualListNames.join("; "),
         ...ATTEMPT_OUTCOMES.map((o) => a.outcomes[o] || 0),
       ]
         .map(esc)
@@ -321,7 +374,7 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
   }
 
   lines.push("");
-  lines.push(["Status list", "Dials", "Recovered", "Recovery rate %"].join(","));
+  lines.push(["List", "Dials", "Recovered", "Recovery rate %"].join(","));
   for (const l of data.listPerformance) {
     lines.push([l.status, l.dials, l.recovered, l.recoveryRate].map(esc).join(","));
   }

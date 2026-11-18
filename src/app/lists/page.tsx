@@ -13,7 +13,7 @@ import {
   getQueueForStatus,
   type QueueLead,
 } from "@/lib/leads";
-import { applyQueueView, parseQueueSort, sortLabel } from "@/lib/queue-filters";
+import { applyQueueView, listViewSearch, parseQueueSort, sortLabel } from "@/lib/queue-filters";
 
 function buildHref(opts: {
   status?: string;
@@ -34,7 +34,7 @@ function buildHref(opts: {
   return q ? `/lists?${q}` : "/lists";
 }
 
-function QueueTable({ queue }: { queue: QueueLead[] }) {
+function QueueTable({ queue, returnQuery }: { queue: QueueLead[]; returnQuery: string }) {
   if (queue.length === 0) {
     return <p className="muted">No visible leads in this list.</p>;
   }
@@ -54,7 +54,9 @@ function QueueTable({ queue }: { queue: QueueLead[] }) {
         {queue.map((lead) => (
           <tr key={lead.id}>
             <td>
-              <Link href={`/leads/${lead.id}`}>{lead.name || "—"}</Link>
+              <Link href={returnQuery ? `/leads/${lead.id}?${returnQuery}` : `/leads/${lead.id}`}>
+                {lead.name || "—"}
+              </Link>
             </td>
             <td>{lead.phone || "—"}</td>
             <td>
@@ -148,8 +150,9 @@ export default async function ListsPage({
     <AppShell user={user}>
       <h1>Recovery lists</h1>
       <p className="muted">
-        Status lists and attempt filters. Sort by appointment date or fewest attempts. Recovered/DNC
-        and sheet DNC stay hidden. <strong>Burned out</strong> = 6+ attempts.
+        Status lists and attempt filters. Sort by appointment date or fewest attempts. A Recovered
+        or DNC you log today stays on this list until tomorrow. Sheet DNC stays hidden.{" "}
+        <strong>Burned out</strong> = 6+ attempts.
       </p>
 
       <div className="tabs" style={{ marginBottom: "0.5rem" }}>
@@ -308,7 +311,17 @@ export default async function ListsPage({
               : ""}
             .
           </p>
-          <QueueTable queue={queue} />
+          <QueueTable
+            queue={queue}
+            returnQuery={listViewSearch({
+              view: view === "attempts" ? "attempts" : undefined,
+              status: view === "status" ? activeStatus || undefined : undefined,
+              attempts: activeAttemptBucket || undefined,
+              sort,
+              from: fromYmd || undefined,
+              to: toYmd || undefined,
+            })}
+          />
         </div>
       )}
     </AppShell>

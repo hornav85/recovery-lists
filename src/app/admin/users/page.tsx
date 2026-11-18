@@ -7,6 +7,7 @@ import type { PublicUser } from "@/lib/db";
 
 type Status = { id: number; name: string; active: number };
 type AttemptBucket = { id: string; label: string };
+type ManualListOpt = { id: number; name: string };
 
 export default function AdminUsersPage() {
   const router = useRouter();
@@ -20,6 +21,11 @@ export default function AdminUsersPage() {
   const [attemptAssignmentsByUser, setAttemptAssignmentsByUser] = useState<
     Record<string, string[]>
   >({});
+  const [manualLists, setManualLists] = useState<ManualListOpt[]>([]);
+  const [manualAssignmentsByUser, setManualAssignmentsByUser] = useState<Record<string, number[]>>(
+    {},
+  );
+  const [assignedManual, setAssignedManual] = useState<number[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [editId, setEditId] = useState<number | null>(null);
   const [assigned, setAssigned] = useState<number[]>([]);
@@ -73,6 +79,8 @@ export default function AdminUsersPage() {
     setUsers(uData.users || []);
     setStatuses((aData.statuses || []).filter((s: Status) => s.active));
     setAttemptBuckets(aData.attemptBuckets || []);
+    setManualLists(aData.manualLists || []);
+    setManualAssignmentsByUser(aData.manualAssignmentsByUser || {});
     applyAssignmentsMap(aData.assignmentsByUser);
     applyAttemptMap(aData.attemptAssignmentsByUser);
   }
@@ -104,7 +112,10 @@ export default function AdminUsersPage() {
     const attemptNames = (attemptAssignmentsByUser[String(userId)] || []).map(
       (id) => attemptBuckets.find((b) => b.id === id)?.label || id,
     );
-    return [...statusNames, ...attemptNames];
+    const manualNames = (manualAssignmentsByUser[String(userId)] || [])
+      .map((id) => manualLists.find((list) => list.id === id)?.name)
+      .filter((n): n is string => Boolean(n));
+    return [...statusNames, ...attemptNames, ...manualNames];
   }
 
   async function openLists(userId: number) {
@@ -122,6 +133,9 @@ export default function AdminUsersPage() {
     }
     setAssigned(data.assignedStatusIds || []);
     setAssignedAttempts(data.assignedAttemptBuckets || []);
+    setAssignedManual(data.assignedManualListIds || []);
+    setManualLists(data.manualLists || []);
+    if (data.manualAssignmentsByUser) setManualAssignmentsByUser(data.manualAssignmentsByUser);
     if (data.assignmentsByUser) applyAssignmentsMap(data.assignmentsByUser);
     if (data.attemptAssignmentsByUser) applyAttemptMap(data.attemptAssignmentsByUser);
     if (data.statuses) {
@@ -270,6 +284,7 @@ export default function AdminUsersPage() {
           userId: selectedId,
           statusIds: assigned,
           attemptBuckets: assignedAttempts,
+          manualListIds: assignedManual,
         }),
       });
       const data = await res.json();
@@ -291,9 +306,16 @@ export default function AdminUsersPage() {
           [String(selectedId)]: assignedAttempts,
         }));
       }
+      if (data.manualAssignmentsByUser) setManualAssignmentsByUser(data.manualAssignmentsByUser);
+      else {
+        setManualAssignmentsByUser((prev) => ({
+          ...prev,
+          [String(selectedId)]: assignedManual,
+        }));
+      }
       const label = selectedUser.displayName || selectedUser.username;
       setPanelMsg(
-        `Saved ${assigned.length} status list(s) and ${assignedAttempts.length} attempt list(s) for ${label}.`,
+        `Saved ${assigned.length} status list(s), ${assignedAttempts.length} attempt list(s), and ${assignedManual.length} additional list(s) for ${label}.`,
       );
     } catch {
       setPanelError("Network error while saving");
@@ -311,6 +333,11 @@ export default function AdminUsersPage() {
     setAssignedAttempts((prev) =>
       prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id],
     );
+    setPanelMsg("");
+  }
+
+  function toggleManual(id: number) {
+    setAssignedManual((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
     setPanelMsg("");
   }
 
@@ -581,7 +608,7 @@ export default function AdminUsersPage() {
           )}
           <p className="muted">
             Status lists = sheet Column W queues. Attempt lists = dial buckets across those statuses
-            (Burned out = 6+ attempts).
+            (Burned out = 6+ attempts). Additional lists = files you uploaded, separate from Sync.
           </p>
           {panelError && <div className="error">{panelError}</div>}
           {panelMsg && <div className="success">{panelMsg}</div>}
@@ -612,6 +639,23 @@ export default function AdminUsersPage() {
               </label>
             ))}
           </div>
+          <h3 style={{ margin: "1.25rem 0 0.5rem", fontSize: "0.95rem" }}>Additional lists</h3>
+          {manualLists.length === 0 ? (
+            <p className="muted">No uploaded lists yet. Add one under Additional lists.</p>
+          ) : (
+            <div className="stack">
+              {manualLists.map((list) => (
+                <label key={list.id} className="row" style={{ gap: "0.5rem" }}>
+                  <input
+                    type="checkbox"
+                    checked={assignedManual.includes(list.id)}
+                    onChange={() => toggleManual(list.id)}
+                  />
+                  {list.name}
+                </label>
+              ))}
+            </div>
+          )}
           <div className="row" style={{ marginTop: "1rem" }}>
             <button className="btn" type="button" onClick={saveAssignments} disabled={saving}>
               {saving ? "Saving…" : "Save assignments"}

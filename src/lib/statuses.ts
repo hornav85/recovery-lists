@@ -1,3 +1,5 @@
+import { pacificYmd } from "./time";
+
 /**
  * List statuses aligned to Dashboard Column W formula outputs.
  * Formula uses PROPER() for known col-N values, plus:
@@ -106,6 +108,19 @@ export const ATTEMPT_OUTCOMES = [
 export type AttemptOutcome = (typeof ATTEMPT_OUTCOMES)[number];
 
 export const HIDDEN_OUTCOMES = new Set<string>(["Recovered", "DNC"]);
+
+/** Recovered/DNC leave the queue the next Pacific day, not the moment they are saved. */
+export function outcomeHiddenNow(
+  outcome: string,
+  createdAt: string | null | undefined,
+  now = new Date(),
+): boolean {
+  if (!HIDDEN_OUTCOMES.has(outcome)) return false;
+  if (!createdAt) return true;
+  const parsed = new Date(createdAt);
+  if (Number.isNaN(parsed.getTime())) return true;
+  return pacificYmd(parsed) !== pacificYmd(now);
+}
 
 /** Old list_statuses.name → new canonical (for DB rename). */
 export const STATUS_RENAMES: Array<{ from: string; to: string }> = [

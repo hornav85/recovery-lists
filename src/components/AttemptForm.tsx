@@ -4,7 +4,15 @@ import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { ATTEMPT_OUTCOMES } from "@/lib/statuses";
 
-export function AttemptForm({ leadId }: { leadId: number }) {
+export function AttemptForm({
+  leadId,
+  manualRowId,
+  returnTo,
+}: {
+  leadId?: number;
+  manualRowId?: number;
+  returnTo?: string;
+}) {
   const router = useRouter();
   const [outcome, setOutcome] = useState<string>(ATTEMPT_OUTCOMES[0]);
   const [notes, setNotes] = useState("");
@@ -16,10 +24,12 @@ export function AttemptForm({ leadId }: { leadId: number }) {
     setSaving(true);
     setError("");
     try {
-      const res = await fetch("/api/attempts", {
+      const res = await fetch(manualRowId ? "/api/manual-attempts" : "/api/attempts", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ leadId, outcome, notes }),
+        body: JSON.stringify(
+          manualRowId ? { rowId: manualRowId, outcome, notes } : { leadId, outcome, notes },
+        ),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -29,7 +39,7 @@ export function AttemptForm({ leadId }: { leadId: number }) {
       setNotes("");
       router.refresh();
       if (outcome === "Recovered" || outcome === "DNC") {
-        router.push("/lists");
+        router.push(returnTo || (manualRowId ? "/additional-lists" : "/lists"));
       }
     } catch {
       setError("Network error");
@@ -55,8 +65,8 @@ export function AttemptForm({ leadId }: { leadId: number }) {
         <textarea value={notes} onChange={(e) => setNotes(e.target.value)} />
       </label>
       <p className="muted" style={{ margin: 0, fontSize: "0.85rem" }}>
-        Timestamp and your display name are stamped automatically on save. Attempts stay in SQLite
-        only — never written to Google Sheets.
+        Timestamp and your display name are stamped automatically on save. Callback is an outcome.
+        Notes stay on the attempt. Nothing here is written to Google Sheets.
       </p>
       {error && <div className="error">{error}</div>}
       <button className="btn" type="submit" disabled={saving}>

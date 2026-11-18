@@ -37,6 +37,7 @@ type ReportPayload = {
     activeHours: number;
     assignedStatusNames: string[];
     assignedAttemptBuckets: string[];
+    assignedManualListNames?: string[];
     outcomes: Record<string, number>;
   }>;
   listPerformance: Array<{
@@ -264,9 +265,17 @@ export default function AdminReportsPage() {
                       <span className="muted">@{a.username}</span>
                     </td>
                     <td>
-                      {[...a.assignedStatusNames, ...a.assignedAttemptBuckets].length ? (
+                      {[
+                        ...a.assignedStatusNames,
+                        ...a.assignedAttemptBuckets,
+                        ...(a.assignedManualListNames || []),
+                      ].length ? (
                         <span className="row" style={{ gap: "0.25rem", flexWrap: "wrap" }}>
-                          {[...a.assignedStatusNames, ...a.assignedAttemptBuckets].map((n) => (
+                          {[
+                            ...a.assignedStatusNames,
+                            ...a.assignedAttemptBuckets,
+                            ...(a.assignedManualListNames || []),
+                          ].map((n) => (
                             <span key={n} className="badge ok">
                               {n}
                             </span>
@@ -297,7 +306,7 @@ export default function AdminReportsPage() {
             <table className="table">
               <thead>
                 <tr>
-                  <th>Status list</th>
+                  <th>List</th>
                   <th>Dials</th>
                   <th>Recovered</th>
                   <th>Rate</th>
@@ -383,7 +392,7 @@ export default function AdminReportsPage() {
           <div className="card">
             <h2>Queue leftover</h2>
             <p className="muted" style={{ marginTop: 0 }}>
-              Visible leads still left in each agent’s assigned status lists (current queue).
+              Visible prospects still left in each agent’s assigned status lists and additional lists.
             </p>
             <table className="table">
               <thead>
