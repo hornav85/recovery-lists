@@ -4,6 +4,7 @@ import {
   countInBucket,
 } from "./attempts";
 import { sql, type PublicUser } from "./db";
+import { fieldMatchesQuery } from "./queue-filters";
 import { outcomeHiddenNow } from "./statuses";
 import { pacificYmd } from "./time";
 
@@ -73,6 +74,10 @@ function normHeader(h: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
+}
+
+export function isPhoneColumn(header: string): boolean {
+  return PHONE_HEADERS.has(normHeader(header));
 }
 
 export function phoneDigits(raw: string): string {
@@ -421,6 +426,35 @@ export async function getManualQueue(
     ? queue.filter((row) => countInBucket(row.attempt_count, attemptBucket))
     : queue;
   return { columns, queue: filtered };
+}
+
+export type ManualSearchHit = ManualQueueRow & { listName: string };
+
+export function manualRowMatchesSearch(
+  row: { name: string | null; phone: string | null; fields: Record<string, string> },
+  rawQuery: string,
+): boolean {
+  const query = rawQuery.trim();
+  if (!query) return true;
+  const values = [row.name || "", row.phone || "", ...Object.values(row.fields)];
+  return values.some((value) => value.trim() !== "" && fieldMatchesQuery(value, query));
+}
+
+/** Visible rows on every additional list, same visibility rules as each list queue. */
+export async function searchVisibleManualRows(rawQuery: string): Promise<ManualSearchHit[]> {
+  const query = rawQuery.trim();
+  if (!query) return [];
+  const lists = await sql<{ id: number; name: string }>(
+    "SELECT id, name FROM manual_lists ORDER BY name",
+  );
+  const hits: ManualSearchHit[] = [];
+  for (const list of lists) {
+    const { queue } = await getManualQueue(list.id);
+    for (const row of queue) {
+      if (manualRowMatchesSearch(row, query)) hits.push({ ...row, listName: list.name });
+    }
+  }
+  return hits;
 }
 
 export async function manualQueueCount(listName: string): Promise<number> {

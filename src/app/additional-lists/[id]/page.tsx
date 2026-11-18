@@ -2,16 +2,17 @@ import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { AppShell } from "@/components/AppShell";
 import { AttemptForm } from "@/components/AttemptForm";
+import { PhoneLink } from "@/components/PhoneLink";
 import { getSessionUser } from "@/lib/auth";
 import { ensureFixtureLeads } from "@/lib/db";
-import { agentCanAccessManualRow, getManualRowDetail } from "@/lib/manual-lists";
+import { agentCanAccessManualRow, getManualRowDetail, isPhoneColumn } from "@/lib/manual-lists";
 
 export default async function AdditionalListProspectPage({
   params,
   searchParams,
 }: {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ list?: string; attempts?: string }>;
+  searchParams: Promise<{ list?: string; attempts?: string; q?: string; find?: string }>;
 }) {
   const user = await getSessionUser();
   if (!user) redirect("/login");
@@ -30,6 +31,8 @@ export default async function AdditionalListProspectPage({
   const back = new URLSearchParams();
   back.set("list", sp.list || String(list.id));
   if (sp.attempts) back.set("attempts", sp.attempts);
+  if (sp.q) back.set("q", sp.q);
+  if (sp.find) back.set("find", sp.find);
   const backHref = `/additional-lists?${back.toString()}`;
 
   return (
@@ -55,7 +58,13 @@ export default async function AdditionalListProspectPage({
           {list.columns.map((column) => (
             <span key={column} style={{ display: "contents" }}>
               <dt>{column}</dt>
-              <dd style={{ whiteSpace: "pre-wrap" }}>{row.fields[column] || "—"}</dd>
+              <dd style={{ whiteSpace: "pre-wrap" }}>
+                {isPhoneColumn(column) ? (
+                  <PhoneLink phone={row.fields[column] || row.phone} />
+                ) : (
+                  row.fields[column] || "—"
+                )}
+              </dd>
             </span>
           ))}
         </dl>
