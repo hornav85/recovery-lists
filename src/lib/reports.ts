@@ -76,6 +76,8 @@ type AttemptJoin = {
   agent_display_name: string;
   prospect_key: string;
   lead_status: string | null;
+  lead_notes: string | null;
+  lead_notes_followups: string | null;
   lead_name: string | null;
   lead_phone: string | null;
   lead_address: string | null;
@@ -94,7 +96,12 @@ export type CallDetailRow = {
   agentDisplayName: string;
   agentUsername: string;
   outcome: string;
+  recovered: string;
   notes: string;
+  agentFeedback: string;
+  leadNotes: string;
+  listSource: string;
+  listName: string;
   prospectKey: string;
   leadName: string;
   phone: string;
@@ -112,6 +119,8 @@ const REPORT_ATTEMPTS_LIMIT = 50_000;
 const ATTEMPT_SELECT = `SELECT a.id, a.outcome, a.notes, a.created_at, a.agent_user_id, a.agent_display_name,
               a.prospect_key,
               l.status AS lead_status,
+              l.notes AS lead_notes,
+              l.notes_followups AS lead_notes_followups,
               l.name AS lead_name,
               l.phone AS lead_phone,
               l.address AS lead_address,
@@ -205,6 +214,14 @@ async function loadManualAttempts(range: DateRange, agentId?: number | null): Pr
     agent_display_name: row.agent_display_name,
     prospect_key: row.prospect_key,
     lead_status: row.lead_status,
+    lead_notes: fieldValue(row.fields_json, ["notes", "note"]),
+    lead_notes_followups: fieldValue(row.fields_json, [
+      "notes and follow ups responses",
+      "notes and follow ups",
+      "follow ups",
+      "follow up",
+      "feedback",
+    ]),
     lead_name: row.lead_name,
     lead_phone: row.lead_phone,
     lead_address: fieldValue(row.fields_json, ["address", "street", "street address"]),
@@ -218,20 +235,40 @@ async function loadManualAttempts(range: DateRange, agentId?: number | null): Pr
   }));
 }
 
+function joinNotes(...parts: Array<string | null | undefined>): string {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const part of parts) {
+    const text = (part || "").trim();
+    if (!text || seen.has(text)) continue;
+    seen.add(text);
+    out.push(text);
+  }
+  return out.join("\n");
+}
+
 function toCallDetail(a: AttemptJoin): CallDetailRow {
+  const agentFeedback = (a.notes || "").trim();
+  const fromAdditionalList = a.prospect_key.startsWith("manual:");
+  const listName = a.lead_status || "";
   return {
     attemptId: a.id,
     dialedAt: a.created_at,
     agentDisplayName: a.display_name || a.agent_display_name,
     agentUsername: a.username,
     outcome: a.outcome,
-    notes: a.notes || "",
+    recovered: a.outcome === "Recovered" ? "yes" : "no",
+    notes: agentFeedback,
+    agentFeedback,
+    leadNotes: joinNotes(a.lead_notes, a.lead_notes_followups),
+    listSource: fromAdditionalList ? "Additional list" : "Recovery list",
+    listName,
     prospectKey: a.prospect_key,
     leadName: a.lead_name || "",
     phone: normalizePhone(a.lead_phone) || "",
     address: a.lead_address || "",
     project: a.lead_project || "",
-    listStatus: a.lead_status || "",
+    listStatus: listName,
     prospectId: a.lead_prospect_id || "",
     sheetLeadId: a.lead_sheet_lead_id || "",
     sheetRowIndex: a.lead_sheet_row_index == null ? "" : String(a.lead_sheet_row_index),
@@ -496,12 +533,16 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
   lines.push(
     [
       "Dialed at",
+      "List source",
+      "List",
+      "Client name",
+      "Phone",
       "Agent",
       "Username",
       "Outcome",
+      "Recovered",
+      "Agent feedback",
       "Notes",
-      "Client name",
-      "Phone",
       "Address",
       "Project",
       "List status",
@@ -517,12 +558,16 @@ export function reportsToCsv(data: Awaited<ReturnType<typeof buildReports>>): st
     lines.push(
       [
         c.dialedAt,
+        c.listSource,
+        c.listName,
+        c.leadName,
+        c.phone,
         c.agentDisplayName,
         c.agentUsername,
         c.outcome,
-        c.notes,
-        c.leadName,
-        c.phone,
+        c.recovered,
+        c.agentFeedback,
+        joinNotes(c.agentFeedback, c.leadNotes),
         c.address,
         c.project,
         c.listStatus,
