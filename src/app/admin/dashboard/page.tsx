@@ -119,6 +119,9 @@ export default function AdminDashboardPage() {
           <button className="btn" type="button" onClick={refresh} disabled={loading}>
             {loading ? "Syncing…" : "Sync now"}
           </button>
+          <a className="btn secondary" href={`/api/admin/reports/export?preset=${encodeURIComponent(preset)}`}>
+            Download CSV
+          </a>
         </div>
       </div>
 
